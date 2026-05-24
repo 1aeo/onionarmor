@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # lib/role.sh — role config loading, validation, and parsing.
 #
 # A role config is a .conf file with optional `# DOC:`, `# REF:`, `# COMPAT:`

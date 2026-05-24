@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # lib/common.sh — shared helpers (paths, logging, audit, errors).
 #
 # Sourced by lib/* and bin/onionarmor. All filesystem paths are env-var

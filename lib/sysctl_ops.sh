@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # lib/sysctl_ops.sh — sysctl read / write / diff helpers.
 
 # sysctl_current <key>: print the current live value, or empty if unreadable.
