@@ -134,7 +134,7 @@ roles/receiver.conf            # 25-key receiver posture
 tests/*.bats                   # bats test suite
 tests/test_helper.bash         # sandbox setup
 tests/fixtures/fake-sysctl     # stub sysctl driver for tests
-tests/fixtures/relay-c-baseline.state  # the relay-c-style starting posture
+tests/fixtures/debian13-relay-baseline.state  # synthetic Debian-13 starting posture
 .github/workflows/tests.yml    # CI: bats + shellcheck
 ```
 

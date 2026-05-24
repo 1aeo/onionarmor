@@ -5,15 +5,15 @@ load test_helper
 @test "round-trip: apply -> diff clean -> mutate -> rollback -> diff restored" {
   declare_host_role "tor-relay"
 
-  # 1. Initial diff: 11/25 drift (the relay-c-style baseline).
+  # 1. Initial diff: 10/25 drift (synthetic Debian-13 fresh-install baseline).
   run "$ONIONARMOR_BIN" diff --role tor-relay
   [ "$status" -eq 0 ]
-  [[ "$output" == *"11/25 sysctls drift"* ]]
+  [[ "$output" == *"10/25 sysctls drift"* ]]
 
-  # 2. apply: produces 11 changes.
+  # 2. apply: produces 10 changes.
   run "$ONIONARMOR_BIN" apply --role tor-relay
   [ "$status" -eq 0 ]
-  [[ "$output" == *"changes=11"* ]]
+  [[ "$output" == *"changes=10"* ]]
 
   # 3. diff is clean post-apply.
   run "$ONIONARMOR_BIN" diff --role tor-relay

@@ -23,7 +23,7 @@ setup() {
 
   mkdir -p "$ONIONARMOR_ETC_DIR" "$ONIONARMOR_SYSCTL_DIR" \
            "$(dirname "$ONIONARMOR_AUDIT_LOG")" "$(dirname "$ONIONARMOR_GRUB_FILE")"
-  cp "$ONIONARMOR_ROOT/tests/fixtures/relay-c-baseline.state" "$FAKE_SYSCTL_STATE"
+  cp "$ONIONARMOR_ROOT/tests/fixtures/debian13-relay-baseline.state" "$FAKE_SYSCTL_STATE"
 }
 
 teardown() {

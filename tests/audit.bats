@@ -8,7 +8,7 @@ load test_helper
   [[ "$output" == *"audit log is empty"* ]]
 }
 
-@test "audit: records apply.start, apply.change (×11), apply.done" {
+@test "audit: records apply.start, apply.change (×10), apply.done" {
   declare_host_role "tor-relay"
   "$ONIONARMOR_BIN" apply --role tor-relay >/dev/null
   run "$ONIONARMOR_BIN" audit
@@ -16,7 +16,7 @@ load test_helper
   [[ "$output" == *"apply.start"* ]]
   [[ "$output" == *"apply.done"* ]]
   changes=$(printf '%s\n' "$output" | grep -c apply.change || true)
-  [ "$changes" -eq 11 ]
+  [ "$changes" -eq 10 ]
 }
 
 @test "audit: records rollback events with timestamps + operator" {

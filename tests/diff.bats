@@ -2,14 +2,13 @@
 
 load test_helper
 
-@test "diff: surfaces the relay-c 11-below-recommended drifts" {
+@test "diff: surfaces the 10-below-recommended drifts of a fresh Debian-13 baseline" {
   run "$ONIONARMOR_BIN" diff --role tor-relay
   [ "$status" -eq 0 ]
-  # The 11 sysctls we identified as below-recommended on relay-c all DRIFT
-  echo "$output" | grep -q "kernel.kptr_restrict.*0 *2 *DRIFT"
-  echo "$output" | grep -q "kernel.yama.ptrace_scope.*0 *1 *DRIFT"
+  # The 10 sysctls a fresh Debian-13 install lacks vs the tor-relay role
+  echo "$output" | grep -q "kernel.kptr_restrict.*1 *2 *DRIFT"
+  echo "$output" | grep -q "kernel.kexec_load_disabled.*0 *1 *DRIFT"
   echo "$output" | grep -q "fs.protected_fifos.*1 *2 *DRIFT"
-  echo "$output" | grep -q "net.ipv4.conf.all.rp_filter.*0 *2 *DRIFT"
   echo "$output" | grep -q "net.ipv4.conf.all.accept_redirects.*1 *0 *DRIFT"
   echo "$output" | grep -q "net.ipv4.conf.default.accept_redirects.*1 *0 *DRIFT"
   echo "$output" | grep -q "net.ipv4.conf.all.send_redirects.*1 *0 *DRIFT"
@@ -17,13 +16,13 @@ load test_helper
   echo "$output" | grep -q "net.ipv4.conf.all.log_martians.*0 *1 *DRIFT"
   echo "$output" | grep -q "net.ipv6.conf.all.accept_redirects.*1 *0 *DRIFT"
   echo "$output" | grep -q "net.ipv6.conf.default.accept_redirects.*1 *0 *DRIFT"
-  [[ "$output" == *"11/25 sysctls drift"* ]]
+  [[ "$output" == *"10/25 sysctls drift"* ]]
 }
 
 @test "diff: shows ok for already-hardened sysctls" {
   run "$ONIONARMOR_BIN" diff --role tor-relay
   [ "$status" -eq 0 ]
-  # Already-hardened — not in the 11 drift set.
+  # Already-hardened — not in the 10 drift set.
   echo "$output" | grep -q "kernel.dmesg_restrict.*1 *1 *ok"
   echo "$output" | grep -q "kernel.randomize_va_space.*2 *2 *ok"
   echo "$output" | grep -q "fs.protected_hardlinks.*1 *1 *ok"

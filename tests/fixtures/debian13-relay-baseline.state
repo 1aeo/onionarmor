@@ -1,15 +1,12 @@
-# Fake-sysctl baseline mirroring the relay-c Debian-13 snapshot:
-# 11 of 25 sysctls below recommended. Used by bats tests to verify
-# `diff` and `apply` produce the right deltas.
-kernel.kptr_restrict = 0
+# Synthetic Debian-13 fresh-install baseline (stock kernel + Debian
+# defaults from /etc/sysctl.d/10-kernel-hardening.conf and similar).
+# 10 of 25 sysctls drift from the tor-relay role profile.
+# Used by bats tests to verify `diff` and `apply` produce the right deltas.
+kernel.kptr_restrict = 1
 kernel.dmesg_restrict = 1
 kernel.unprivileged_bpf_disabled = 2
-# NOTE: relay-c is a KVM guest where kexec posture is "N/A" — for the
-# tor-relay role profile (bare-metal expectation) we pin this at 1 in the
-# fixture so the test surfaces exactly the 11 documented drifts. See
-# eval-host.conf for the role that legitimately keeps this at 0.
-kernel.kexec_load_disabled = 1
-kernel.yama.ptrace_scope = 0
+kernel.kexec_load_disabled = 0
+kernel.yama.ptrace_scope = 1
 kernel.randomize_va_space = 2
 fs.suid_dumpable = 0
 fs.protected_hardlinks = 1
@@ -17,7 +14,7 @@ fs.protected_symlinks = 1
 fs.protected_fifos = 1
 fs.protected_regular = 2
 net.ipv4.tcp_syncookies = 1
-net.ipv4.conf.all.rp_filter = 0
+net.ipv4.conf.all.rp_filter = 2
 net.ipv4.conf.default.rp_filter = 2
 net.ipv4.conf.all.accept_redirects = 1
 net.ipv4.conf.default.accept_redirects = 1

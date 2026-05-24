@@ -21,14 +21,14 @@ load test_helper
   [[ "$output" == *"host role mismatch"* ]]
 }
 
-@test "apply --dry-run: shows the 11 changes but writes nothing" {
+@test "apply --dry-run: shows the 10 changes but writes nothing" {
   declare_host_role "tor-relay"
   before_managed=$(ls "$ONIONARMOR_SYSCTL_DIR" 2>/dev/null | wc -l | awk '{print $1}')
   before_audit=$(test -f "$ONIONARMOR_AUDIT_LOG" && wc -l < "$ONIONARMOR_AUDIT_LOG" || echo 0)
   run "$ONIONARMOR_BIN" apply --role tor-relay --dry-run
   [ "$status" -eq 0 ]
-  [[ "$output" == *"changes=11"* ]]
-  [[ "$output" == *"noops=14"* ]]
+  [[ "$output" == *"changes=10"* ]]
+  [[ "$output" == *"noops=15"* ]]
   [[ "$output" == *"No changes written"* ]]
   after_managed=$(ls "$ONIONARMOR_SYSCTL_DIR" 2>/dev/null | wc -l | awk '{print $1}')
   after_audit=$(test -f "$ONIONARMOR_AUDIT_LOG" && wc -l < "$ONIONARMOR_AUDIT_LOG" || echo 0)
@@ -44,7 +44,7 @@ load test_helper
   [ -f "$ONIONARMOR_AUDIT_LOG" ]
   grep -q "apply.start" "$ONIONARMOR_AUDIT_LOG"
   grep -q "apply.done" "$ONIONARMOR_AUDIT_LOG"
-  grep -q "apply.change.*kernel.kptr_restrict.*old=0.*new=2" "$ONIONARMOR_AUDIT_LOG"
+  grep -q "apply.change.*kernel.kptr_restrict.*old=1.*new=2" "$ONIONARMOR_AUDIT_LOG"
   # Post-apply diff should be all-clean.
   run "$ONIONARMOR_BIN" diff --role tor-relay
   [[ "$output" == *"0/25 sysctls drift"* ]]
