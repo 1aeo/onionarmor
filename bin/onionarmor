@@ -1,0 +1,317 @@
+#!/usr/bin/env bash
+# onionarmor — apply hardening recommendations to Ubuntu/Debian relay fleets.
+#
+# Sister to onionwarden (monitoring, read-only) and onionleak (audit). This
+# tool MODIFIES host state with backup + rollback safety rails. Scope is
+# kernel sysctls + (separately) GRUB-cmdline lockdown.
+
+set -euo pipefail
+
+# Locate the install prefix (parent of bin/). Use a portable readlink trick
+# so symlinks to bin/onionarmor still work.
+_oa_bin=${BASH_SOURCE[0]}
+if [ -L "$_oa_bin" ]; then
+  _oa_bin=$(readlink "$_oa_bin")
+fi
+case "$_oa_bin" in
+  /*) ;;
+  *)  _oa_bin="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "$_oa_bin")" ;;
+esac
+ONIONARMOR_PREFIX=$(cd "$(dirname "$_oa_bin")/.." && pwd)
+export ONIONARMOR_PREFIX
+
+# shellcheck source=lib/common.sh
+. "$ONIONARMOR_PREFIX/lib/common.sh"
+# shellcheck source=lib/role.sh
+. "$ONIONARMOR_PREFIX/lib/role.sh"
+# shellcheck source=lib/sysctl_ops.sh
+. "$ONIONARMOR_PREFIX/lib/sysctl_ops.sh"
+
+# ---------------------------------------------------------------------------
+# Usage / help.
+# ---------------------------------------------------------------------------
+usage() {
+  cat <<'EOF'
+onionarmor — apply hardening recommendations idempotently, with rollback.
+
+USAGE
+  onionarmor <command> [options]
+
+COMMANDS
+  list      [--role <name>]              Show recommended sysctls + values.
+  diff      [--role <name>]              Show current host values vs target.
+  apply     [--role <name>] [--dry-run] [--first-run]
+                                         Apply target sysctls. Backs up the
+                                         prior managed file, writes the new
+                                         one, then `sysctl --system`.
+  rollback  [--role <name>]              Restore the most recent backup.
+  audit                                  Print the audit log.
+  apply-lockdown [--no-reboot]           Stage `lockdown=integrity` in GRUB
+                                         cmdline (needs reboot). Documented
+                                         but never auto-rebooted.
+  help                                   Show this help.
+
+SAFETY RAILS
+  * `apply` refuses unless --role is set AND /etc/onionarmor/role.conf says
+    the same role (cross-check to prevent applying tor-relay profile to a
+    workstation).
+  * Every apply makes a timestamped backup of the prior managed file.
+  * `apply --first-run` requires explicit confirmation.
+  * Idempotent — re-running apply with no role-config change produces no diff.
+  * Lockdown changes need reboot — never auto-applied by `apply`.
+
+ENV OVERRIDES (testing)
+  ONIONARMOR_ROLES_DIR, ONIONARMOR_ETC_DIR, ONIONARMOR_SYSCTL_DIR,
+  ONIONARMOR_AUDIT_LOG, ONIONARMOR_SYSCTL_CMD, ONIONARMOR_GRUB_FILE,
+  ONIONARMOR_UPDATE_GRUB_CMD, ONIONARMOR_AUTO_CONFIRM, ONIONARMOR_SKIP_RELOAD.
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# Argument parsing: extract --role and recognise --dry-run / --first-run /
+# --no-reboot. Unknown args -> error.
+# ---------------------------------------------------------------------------
+_oa_role=""
+_oa_dry_run=0
+_oa_first_run=0
+_oa_no_reboot=0
+
+oa_parse_args() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --role)      _oa_role=${2:-};  shift 2 ;;
+      --role=*)    _oa_role=${1#--role=}; shift ;;
+      --dry-run)   _oa_dry_run=1;   shift ;;
+      --first-run) _oa_first_run=1; shift ;;
+      --no-reboot) _oa_no_reboot=1; shift ;;
+      -h|--help)   usage; exit 0 ;;
+      *)           die "unknown argument: $1" ;;
+    esac
+  done
+}
+
+# ---------------------------------------------------------------------------
+# cmd_list — show role's target values + DOC/REF/COMPAT.
+# Pure read; never touches the host.
+# ---------------------------------------------------------------------------
+cmd_list() {
+  oa_parse_args "$@"
+  [ -n "$_oa_role" ] || die "list: --role <name> required"
+  role_validate "$_oa_role"
+  local f; f=$(role_file_for "$_oa_role")
+  info "role=$_oa_role file=$f"
+  printf '\n%-40s %s\n' "SYSCTL" "TARGET"
+  printf '%-40s %s\n' "----------------------------------------" "------"
+  role_parse "$_oa_role" | awk '{printf "%-40s %s\n", $1, $2}'
+  local n; n=$(role_parse "$_oa_role" | wc -l | awk '{print $1}')
+  printf '\n%d sysctl entries.\n' "$n"
+  printf '\n(Use `onionarmor diff --role %s` to compare to live host.)\n' "$_oa_role"
+}
+
+# ---------------------------------------------------------------------------
+# cmd_diff — current host value vs target. Read-only.
+# Exit 0 even if there is a diff; exit code reflects errors only.
+# ---------------------------------------------------------------------------
+cmd_diff() {
+  oa_parse_args "$@"
+  [ -n "$_oa_role" ] || die "diff: --role <name> required"
+  role_validate "$_oa_role"
+  local key target current diffs=0 total=0
+  printf '%-40s %-10s %-10s %s\n' "SYSCTL" "CURRENT" "TARGET" "STATUS"
+  printf '%-40s %-10s %-10s %s\n' "----------------------------------------" "----------" "----------" "------"
+  while read -r key target; do
+    total=$((total + 1))
+    current=$(sysctl_current "$key")
+    if [ -z "$current" ]; then
+      printf '%-40s %-10s %-10s %s\n' "$key" "?" "$target" "missing"
+      diffs=$((diffs + 1))
+    elif [ "$(sysctl_normalise_value "$current")" = "$(sysctl_normalise_value "$target")" ]; then
+      printf '%-40s %-10s %-10s %s\n' "$key" "$current" "$target" "ok"
+    else
+      printf '%-40s %-10s %-10s %s\n' "$key" "$current" "$target" "DRIFT"
+      diffs=$((diffs + 1))
+    fi
+  done < <(role_parse "$_oa_role")
+  printf '\n%d/%d sysctls drift from target.\n' "$diffs" "$total"
+}
+
+# ---------------------------------------------------------------------------
+# cmd_apply — write target sysctls to /etc/sysctl.d/99-onionarmor-<role>.conf
+# with safety rails.
+# ---------------------------------------------------------------------------
+cmd_apply() {
+  oa_parse_args "$@"
+  [ -n "$_oa_role" ] || die "apply: --role <name> required"
+  role_validate "$_oa_role"
+  host_role_assert "$_oa_role"
+
+  if [ "$_oa_first_run" -eq 1 ] && [ "$_oa_dry_run" -eq 0 ]; then
+    printf 'First-run apply for role=%s on host classified as %s.\n' \
+      "$_oa_role" "$_oa_role" >&2
+    oa_confirm "Proceed with applying $_oa_role posture to this host?" \
+      || die "first-run apply cancelled by operator"
+  fi
+
+  local key target current changes=0 noops=0 errs=0
+  # Use script-global temp vars so the EXIT trap can see them after this
+  # function returns; locals would be unset by then under `set -u`.
+  pairs_tmp=$(mktemp)
+  diff_tmp=$(mktemp)
+  trap 'rm -f "${pairs_tmp:-}" "${diff_tmp:-}"' EXIT
+  role_parse "$_oa_role" > "$pairs_tmp"
+
+  while read -r key target; do
+    current=$(sysctl_current "$key")
+    if [ "$(sysctl_normalise_value "$current")" = "$(sysctl_normalise_value "$target")" ]; then
+      printf '%s\t%s\t%s\tnoop\n' "$key" "$current" "$target" >> "$diff_tmp"
+      noops=$((noops + 1))
+    else
+      printf '%s\t%s\t%s\tchange\n' "$key" "${current:-?}" "$target" >> "$diff_tmp"
+      changes=$((changes + 1))
+    fi
+  done < "$pairs_tmp"
+
+  if [ "$_oa_dry_run" -eq 1 ]; then
+    info "dry-run: role=$_oa_role changes=$changes noops=$noops"
+    printf '\n%-40s %-10s %-10s %s\n' "SYSCTL" "CURRENT" "TARGET" "ACTION"
+    printf '%-40s %-10s %-10s %s\n' "----------------------------------------" "----------" "----------" "------"
+    awk -F'\t' '{printf "%-40s %-10s %-10s %s\n", $1, $2, $3, $4}' "$diff_tmp"
+    printf '\nNo changes written. Re-run without --dry-run to apply.\n'
+    return 0
+  fi
+
+  audit_log apply.start "role=$_oa_role changes=$changes noops=$noops first_run=$_oa_first_run"
+
+  local backup=""
+  backup=$(backup_managed_sysctl "$_oa_role") || true
+  if [ -n "$backup" ]; then
+    audit_log apply.backup "role=$_oa_role backup=$backup"
+  fi
+
+  write_managed_sysctl "$_oa_role" "$pairs_tmp" \
+    || { audit_log apply.fail "role=$_oa_role stage=write"; die "failed to write managed sysctl file"; }
+
+  if ! reload_sysctl; then
+    audit_log apply.fail "role=$_oa_role stage=reload"
+    warn "sysctl --system reload returned nonzero; managed file was written but some keys may not be active"
+    errs=$((errs + 1))
+  fi
+
+  while IFS=$'\t' read -r key cur tgt act; do
+    [ "$act" = "change" ] || continue
+    audit_log apply.change "role=$_oa_role key=$key old=$cur new=$tgt"
+  done < "$diff_tmp"
+
+  audit_log apply.done "role=$_oa_role changes=$changes noops=$noops errors=$errs"
+  info "apply: role=$_oa_role changes=$changes noops=$noops errors=$errs"
+  [ "$errs" -eq 0 ] || exit 2
+}
+
+# ---------------------------------------------------------------------------
+# cmd_rollback — restore the most recent backup.
+# ---------------------------------------------------------------------------
+cmd_rollback() {
+  oa_parse_args "$@"
+  [ -n "$_oa_role" ] || die "rollback: --role <name> required"
+  role_validate "$_oa_role"
+  host_role_assert "$_oa_role"
+
+  local latest target
+  latest=$(newest_backup "$_oa_role")
+  target=$(managed_sysctl_path "$_oa_role")
+  [ -n "$latest" ] || die "no backups to restore for role=$_oa_role"
+
+  audit_log rollback.start "role=$_oa_role from=$latest to=$target"
+  cp -p "$latest" "$target" \
+    || { audit_log rollback.fail "role=$_oa_role stage=copy"; die "rollback copy failed"; }
+  reload_sysctl || { audit_log rollback.fail "role=$_oa_role stage=reload"; warn "sysctl reload returned nonzero"; }
+  audit_log rollback.done "role=$_oa_role restored=$latest"
+  info "rollback: restored $latest -> $target"
+}
+
+# ---------------------------------------------------------------------------
+# cmd_audit — print the audit log.
+# ---------------------------------------------------------------------------
+cmd_audit() {
+  if [ ! -r "$ONIONARMOR_AUDIT_LOG" ]; then
+    info "audit log is empty (no operations recorded yet): $ONIONARMOR_AUDIT_LOG"
+    return 0
+  fi
+  printf 'TIMESTAMP\tOPERATOR\tACTION\tDETAILS\n'
+  cat "$ONIONARMOR_AUDIT_LOG"
+}
+
+# ---------------------------------------------------------------------------
+# cmd_apply_lockdown — stage `lockdown=integrity` in GRUB cmdline.
+# Never auto-reboots. Without --no-reboot it prints a REBOOT REQUIRED warning.
+# ---------------------------------------------------------------------------
+cmd_apply_lockdown() {
+  oa_parse_args "$@"
+  local f=$ONIONARMOR_GRUB_FILE tmp
+  [ -r "$f" ] || die "GRUB file not found or unreadable: $f"
+  [ -w "$f" ] || die "GRUB file not writable (run as root?): $f"
+
+  audit_log lockdown.start "file=$f"
+  tmp="$f.onionarmor.$$"
+
+  awk '
+    BEGIN { changed = 0 }
+    /^GRUB_CMDLINE_LINUX_DEFAULT[[:space:]]*=/ {
+      if ($0 ~ /lockdown=/) {
+        gsub(/lockdown=[a-z]+/, "lockdown=integrity")
+      } else {
+        # Insert before the closing quote.
+        sub(/"[[:space:]]*$/, " lockdown=integrity\"")
+      }
+      changed = 1
+    }
+    { print }
+    END {
+      if (changed == 0) exit 3
+    }
+  ' "$f" > "$tmp" || { rm -f "$tmp"; audit_log lockdown.fail "stage=awk"; die "no GRUB_CMDLINE_LINUX_DEFAULT line found in $f"; }
+
+  mv "$tmp" "$f" || { audit_log lockdown.fail "stage=move"; die "cannot replace $f"; }
+
+  if [ "${ONIONARMOR_SKIP_UPDATE_GRUB:-}" != "yes" ]; then
+    "$ONIONARMOR_UPDATE_GRUB_CMD" >/dev/null 2>&1 \
+      || { audit_log lockdown.fail "stage=update-grub"; warn "$ONIONARMOR_UPDATE_GRUB_CMD returned nonzero; lockdown change is in $f but may not be active until you fix this"; }
+  fi
+
+  audit_log lockdown.done "file=$f reboot_required=true no_reboot=$_oa_no_reboot"
+
+  if [ "$_oa_no_reboot" -eq 1 ]; then
+    info "lockdown staged in $f. Apply on next manual reboot."
+  else
+    cat >&2 <<EOF
+
+============================================================
+REBOOT REQUIRED
+============================================================
+Kernel lockdown=integrity has been staged in $f.
+It will take effect on next reboot. Reboot when convenient.
+onionarmor does NOT reboot automatically.
+============================================================
+EOF
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Dispatch.
+# ---------------------------------------------------------------------------
+main() {
+  [ $# -ge 1 ] || { usage; exit 2; }
+  local cmd=$1; shift
+  case "$cmd" in
+    list)            cmd_list "$@" ;;
+    diff)            cmd_diff "$@" ;;
+    apply)           cmd_apply "$@" ;;
+    rollback)        cmd_rollback "$@" ;;
+    audit)           cmd_audit "$@" ;;
+    apply-lockdown)  cmd_apply_lockdown "$@" ;;
+    help|--help|-h)  usage ;;
+    *)               die "unknown command: $cmd (try: onionarmor help)" ;;
+  esac
+}
+
+main "$@"

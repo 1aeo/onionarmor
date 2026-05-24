@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# fake-sysctl — a stand-in for /sbin/sysctl driven by a state file.
+#
+# State file is at $FAKE_SYSCTL_STATE (default $TMPDIR/fake-sysctl-state),
+# format: `key = value` lines.
+#
+# Supports:
+#   sysctl -n <key>     read one key from state
+#   sysctl --system     re-apply every *.conf under ONIONARMOR_SYSCTL_DIR
+#                       into the state file (last write wins).
+#
+# Unknown invocations exit 0 silently.
+
+set -e
+
+state_file=${FAKE_SYSCTL_STATE:-${TMPDIR:-/tmp}/fake-sysctl-state}
+
+case "${1:-}" in
+  -n)
+    key=${2:-}
+    [ -n "$key" ] || { echo "fake-sysctl: -n needs a key" >&2; exit 1; }
+    awk -F= -v want="$key" '
+      /^[[:space:]]*#/ { next }
+      {
+        k = $1; gsub(/^[[:space:]]+|[[:space:]]+$/, "", k)
+        if (k == want) {
+          v = $0; sub(/^[^=]*=/, "", v)
+          gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+          print v
+          exit
+        }
+      }
+    ' "$state_file" 2>/dev/null
+    ;;
+  --system)
+    sysctl_d=${ONIONARMOR_SYSCTL_DIR:-/etc/sysctl.d}
+    [ -d "$sysctl_d" ] || exit 0
+    overrides=$(mktemp)
+    for f in "$sysctl_d"/*.conf; do
+      [ -f "$f" ] || continue
+      case "$f" in *.bak.*) continue ;; esac
+      awk -F= '
+        /^[[:space:]]*#/ { next }
+        /^[[:space:]]*$/ { next }
+        {
+          k=$1; gsub(/^[[:space:]]+|[[:space:]]+$/, "", k)
+          v=$0; sub(/^[^=]*=/, "", v); gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+          if (k != "" && v != "") print k "=" v
+        }
+      ' "$f" >> "$overrides"
+    done
+    # Apply overrides on top of state; last write wins.
+    next_state=$(mktemp)
+    awk -F= -v ovr="$overrides" '
+      BEGIN {
+        while ((getline line < ovr) > 0) {
+          k = line; sub(/=.*/, "", k)
+          v = line; sub(/^[^=]*=/, "", v)
+          map[k] = v
+          seen[k] = 1
+        }
+        close(ovr)
+      }
+      /^[[:space:]]*#/ { print; next }
+      /^[[:space:]]*$/ { print; next }
+      {
+        k=$1; gsub(/^[[:space:]]+|[[:space:]]+$/, "", k)
+        if (k in map) { print k " = " map[k]; delete map[k] }
+        else { print }
+      }
+      END { for (k in map) print k " = " map[k] }
+    ' "$state_file" > "$next_state"
+    mv "$next_state" "$state_file"
+    rm -f "$overrides"
+    ;;
+  *)
+    ;;
+esac
+exit 0

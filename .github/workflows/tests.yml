@@ -1,0 +1,40 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  bats:
+    name: bats (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-22.04]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install bats
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats
+      - name: Versions
+        run: |
+          bash --version | head -1
+          bats --version
+          awk --version 2>&1 | head -1 || awk -W version 2>&1 | head -1 || true
+      - name: Run tests
+        run: bats --tap tests/
+
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Lint bin/onionarmor + lib/*
+        run: |
+          shellcheck --severity=warning bin/onionarmor lib/*.sh tests/fixtures/fake-sysctl
