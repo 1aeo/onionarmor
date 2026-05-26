@@ -115,18 +115,23 @@ cmd_diff() {
   oa_parse_args "$@"
   require_role diff
   local key target current diffs=0 total=0
-  printf '%-40s %-10s %-10s %s\n' "SYSCTL" "CURRENT" "TARGET" "STATUS"
-  printf '%-40s %-10s %-10s %s\n' "----------------------------------------" "----------" "----------" "------"
+  # shellcheck disable=SC2059  # format is a centralised constant, not user input
+  printf "$_OA_FMT_SYSCTL_ROW" "SYSCTL" "CURRENT" "TARGET" "STATUS"
+  # shellcheck disable=SC2059
+  printf "$_OA_FMT_SYSCTL_ROW" "$_OA_DASH_SYSCTL_ROW" "$_OA_DASH_SYSCTL_COL" "$_OA_DASH_SYSCTL_COL" "------"
   while read -r key target; do
     total=$((total + 1))
     current=$(sysctl_current "$key")
     if [ -z "$current" ]; then
-      printf '%-40s %-10s %-10s %s\n' "$key" "?" "$target" "missing"
+      # shellcheck disable=SC2059
+      printf "$_OA_FMT_SYSCTL_ROW" "$key" "?" "$target" "missing"
       diffs=$((diffs + 1))
     elif [ "$(sysctl_normalise_value "$current")" = "$(sysctl_normalise_value "$target")" ]; then
-      printf '%-40s %-10s %-10s %s\n' "$key" "$current" "$target" "ok"
+      # shellcheck disable=SC2059
+      printf "$_OA_FMT_SYSCTL_ROW" "$key" "$current" "$target" "ok"
     else
-      printf '%-40s %-10s %-10s %s\n' "$key" "$current" "$target" "DRIFT"
+      # shellcheck disable=SC2059
+      printf "$_OA_FMT_SYSCTL_ROW" "$key" "$current" "$target" "DRIFT"
       diffs=$((diffs + 1))
     fi
   done < <(role_parse "$_oa_role")
@@ -170,9 +175,12 @@ cmd_apply() {
 
   if [ "$_oa_dry_run" -eq 1 ]; then
     info "dry-run: role=$_oa_role changes=$changes noops=$noops"
-    printf '\n%-40s %-10s %-10s %s\n' "SYSCTL" "CURRENT" "TARGET" "ACTION"
-    printf '%-40s %-10s %-10s %s\n' "----------------------------------------" "----------" "----------" "------"
-    awk -F'\t' '{printf "%-40s %-10s %-10s %s\n", $1, $2, $3, $4}' "$diff_tmp"
+    printf '\n'
+    # shellcheck disable=SC2059  # format is a centralised constant, not user input
+    printf "$_OA_FMT_SYSCTL_ROW" "SYSCTL" "CURRENT" "TARGET" "ACTION"
+    # shellcheck disable=SC2059
+    printf "$_OA_FMT_SYSCTL_ROW" "$_OA_DASH_SYSCTL_ROW" "$_OA_DASH_SYSCTL_COL" "$_OA_DASH_SYSCTL_COL" "------"
+    awk -F'\t' -v fmt="$_OA_FMT_SYSCTL_ROW" '{printf fmt, $1, $2, $3, $4}' "$diff_tmp"
     printf '\nNo changes written. Re-run without --dry-run to apply.\n'
     return 0
   fi

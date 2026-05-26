@@ -30,6 +30,13 @@ die()  { printf '%sonionarmor: error:%s %s\n' "$_OA_C_RED" "$_OA_C_OFF" "$*" >&2
 warn() { printf '%sonionarmor: warn:%s %s\n'  "$_OA_C_YEL" "$_OA_C_OFF" "$*" >&2; }
 info() { printf 'onionarmor: %s\n' "$*"; }
 
+# Tabular layout for `diff` + `apply --dry-run` sysctl rows. Columns:
+#   KEY (40w) CURRENT (10w) TARGET (10w) STATUS (free)
+# Centralised so widening one column doesn't require touching 7 printf sites.
+_OA_FMT_SYSCTL_ROW='%-40s %-10s %-10s %s\n'
+_OA_DASH_SYSCTL_ROW='----------------------------------------'
+_OA_DASH_SYSCTL_COL='----------'
+
 oa_utc_ts() { date -u +%Y%m%dT%H%M%SZ; }
 oa_utc_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
