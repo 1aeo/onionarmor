@@ -30,6 +30,13 @@ die()  { printf '%sonionarmor: error:%s %s\n' "$_OA_C_RED" "$_OA_C_OFF" "$*" >&2
 warn() { printf '%sonionarmor: warn:%s %s\n'  "$_OA_C_YEL" "$_OA_C_OFF" "$*" >&2; }
 info() { printf 'onionarmor: %s\n' "$*"; }
 
+# Tabular layout for `diff` + `apply --dry-run` sysctl rows. Columns:
+#   KEY (40w) CURRENT (10w) TARGET (10w) STATUS (free)
+# Centralised so widening one column doesn't require touching 7 printf sites.
+_OA_FMT_SYSCTL_ROW='%-40s %-10s %-10s %s\n'
+_OA_DASH_SYSCTL_ROW='----------------------------------------'
+_OA_DASH_SYSCTL_COL='----------'
+
 oa_utc_ts() { date -u +%Y%m%dT%H%M%SZ; }
 oa_utc_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
@@ -49,6 +56,16 @@ audit_log() {
     || die "cannot write audit log: $ONIONARMOR_AUDIT_LOG"
 }
 
+# audit_fail_die  <fail-action> <details> <die-msg>
+# audit_fail_warn <fail-action> <details> <warn-msg>
+#
+# Collapses the recurring `|| { audit_log X.fail "stage=Y"; die/warn "Z"; }`
+# pattern at apply/rollback/lockdown fail sites. Use as:
+#   <command> || audit_fail_die  apply.fail "stage=write" "failed to write …"
+#   <command> || audit_fail_warn rollback.fail "stage=reload" "sysctl reload …"
+audit_fail_die()  { audit_log "$1" "$2"; die  "$3"; }
+audit_fail_warn() { audit_log "$1" "$2"; warn "$3"; }
+
 # ---------------------------------------------------------------------------
 # Confirmation prompt. Reads from stdin; returns 0 on yes/y, nonzero otherwise.
 # Tests override via $ONIONARMOR_AUTO_CONFIRM=yes.
@@ -61,4 +78,11 @@ oa_confirm() {
   printf '%s [yes/NO] ' "$1" >&2
   read -r reply || return 1
   case "$reply" in yes|YES|y|Y) return 0 ;; *) return 1 ;; esac
+}
+
+# require_role <subcommand-name>: every command that takes --role gates on a
+# non-empty role + the role file existing. Sources lib/role.sh's `role_validate`.
+require_role() {
+  [ -n "${_oa_role:-}" ] || die "$1: --role <name> required"
+  role_validate "$_oa_role"
 }
