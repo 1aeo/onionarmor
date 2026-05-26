@@ -186,7 +186,7 @@ cmd_apply() {
   fi
 
   write_managed_sysctl "$_oa_role" "$pairs_tmp" \
-    || { audit_log apply.fail "role=$_oa_role stage=write"; die "failed to write managed sysctl file"; }
+    || audit_fail_die apply.fail "role=$_oa_role stage=write" "failed to write managed sysctl file"
 
   if ! reload_sysctl; then
     audit_log apply.fail "role=$_oa_role stage=reload"
@@ -219,8 +219,9 @@ cmd_rollback() {
 
   audit_log rollback.start "role=$_oa_role from=$latest to=$target"
   cp -p "$latest" "$target" \
-    || { audit_log rollback.fail "role=$_oa_role stage=copy"; die "rollback copy failed"; }
-  reload_sysctl || { audit_log rollback.fail "role=$_oa_role stage=reload"; warn "sysctl reload returned nonzero"; }
+    || audit_fail_die rollback.fail "role=$_oa_role stage=copy" "rollback copy failed"
+  reload_sysctl \
+    || audit_fail_warn rollback.fail "role=$_oa_role stage=reload" "sysctl reload returned nonzero"
   audit_log rollback.done "role=$_oa_role restored=$latest"
   info "rollback: restored $latest -> $target"
 }
@@ -265,13 +266,14 @@ cmd_apply_lockdown() {
     END {
       if (changed == 0) exit 3
     }
-  ' "$f" > "$tmp" || { rm -f "$tmp"; audit_log lockdown.fail "stage=awk"; die "no GRUB_CMDLINE_LINUX_DEFAULT line found in $f"; }
+  ' "$f" > "$tmp" || { rm -f "$tmp"; audit_fail_die lockdown.fail "stage=awk" "no GRUB_CMDLINE_LINUX_DEFAULT line found in $f"; }
 
-  mv "$tmp" "$f" || { audit_log lockdown.fail "stage=move"; die "cannot replace $f"; }
+  mv "$tmp" "$f" \
+    || audit_fail_die lockdown.fail "stage=move" "cannot replace $f"
 
   if [ "${ONIONARMOR_SKIP_UPDATE_GRUB:-}" != "yes" ]; then
     "$ONIONARMOR_UPDATE_GRUB_CMD" >/dev/null 2>&1 \
-      || { audit_log lockdown.fail "stage=update-grub"; warn "$ONIONARMOR_UPDATE_GRUB_CMD returned nonzero; lockdown change is in $f but may not be active until you fix this"; }
+      || audit_fail_warn lockdown.fail "stage=update-grub" "$ONIONARMOR_UPDATE_GRUB_CMD returned nonzero; lockdown change is in $f but may not be active until you fix this"
   fi
 
   audit_log lockdown.done "file=$f reboot_required=true no_reboot=$_oa_no_reboot"

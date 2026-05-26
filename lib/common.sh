@@ -49,6 +49,16 @@ audit_log() {
     || die "cannot write audit log: $ONIONARMOR_AUDIT_LOG"
 }
 
+# audit_fail_die  <fail-action> <details> <die-msg>
+# audit_fail_warn <fail-action> <details> <warn-msg>
+#
+# Collapses the recurring `|| { audit_log X.fail "stage=Y"; die/warn "Z"; }`
+# pattern at apply/rollback/lockdown fail sites. Use as:
+#   <command> || audit_fail_die  apply.fail "stage=write" "failed to write …"
+#   <command> || audit_fail_warn rollback.fail "stage=reload" "sysctl reload …"
+audit_fail_die()  { audit_log "$1" "$2"; die  "$3"; }
+audit_fail_warn() { audit_log "$1" "$2"; warn "$3"; }
+
 # ---------------------------------------------------------------------------
 # Confirmation prompt. Reads from stdin; returns 0 on yes/y, nonzero otherwise.
 # Tests override via $ONIONARMOR_AUTO_CONFIRM=yes.
