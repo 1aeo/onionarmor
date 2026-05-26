@@ -96,8 +96,7 @@ oa_parse_args() {
 # ---------------------------------------------------------------------------
 cmd_list() {
   oa_parse_args "$@"
-  [ -n "$_oa_role" ] || die "list: --role <name> required"
-  role_validate "$_oa_role"
+  require_role list
   local f; f=$(role_file_for "$_oa_role")
   info "role=$_oa_role file=$f"
   printf '\n%-40s %s\n' "SYSCTL" "TARGET"
@@ -114,8 +113,7 @@ cmd_list() {
 # ---------------------------------------------------------------------------
 cmd_diff() {
   oa_parse_args "$@"
-  [ -n "$_oa_role" ] || die "diff: --role <name> required"
-  role_validate "$_oa_role"
+  require_role diff
   local key target current diffs=0 total=0
   printf '%-40s %-10s %-10s %s\n' "SYSCTL" "CURRENT" "TARGET" "STATUS"
   printf '%-40s %-10s %-10s %s\n' "----------------------------------------" "----------" "----------" "------"
@@ -141,8 +139,7 @@ cmd_diff() {
 # ---------------------------------------------------------------------------
 cmd_apply() {
   oa_parse_args "$@"
-  [ -n "$_oa_role" ] || die "apply: --role <name> required"
-  role_validate "$_oa_role"
+  require_role apply
   host_role_assert "$_oa_role"
 
   if [ "$_oa_first_run" -eq 1 ] && [ "$_oa_dry_run" -eq 0 ]; then
@@ -212,8 +209,7 @@ cmd_apply() {
 # ---------------------------------------------------------------------------
 cmd_rollback() {
   oa_parse_args "$@"
-  [ -n "$_oa_role" ] || die "rollback: --role <name> required"
-  role_validate "$_oa_role"
+  require_role rollback
   host_role_assert "$_oa_role"
 
   local latest target

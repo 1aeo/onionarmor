@@ -62,3 +62,10 @@ oa_confirm() {
   read -r reply || return 1
   case "$reply" in yes|YES|y|Y) return 0 ;; *) return 1 ;; esac
 }
+
+# require_role <subcommand-name>: every command that takes --role gates on a
+# non-empty role + the role file existing. Sources lib/role.sh's `role_validate`.
+require_role() {
+  [ -n "${_oa_role:-}" ] || die "$1: --role <name> required"
+  role_validate "$_oa_role"
+}
