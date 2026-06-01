@@ -25,10 +25,10 @@ _stub() {
   chmod +x "$script"
 }
 
-# Render an /etc/os-release fixture inside $BATS_TEST_TMPDIR and echo its path.
+# Render an /etc/os-release fixture inside $OA_TMP and echo its path.
 _make_os_release() {
   local id="$1" id_like="${2:-}"
-  local path="${BATS_TEST_TMPDIR}/os-release"
+  local path="${OA_TMP}/os-release"
   {
     printf 'ID=%s\n' "$id"
     [ -n "$id_like" ] && printf 'ID_LIKE=%s\n' "$id_like"
@@ -43,7 +43,14 @@ setup() {
   INSTALLER="${REPO_ROOT}/install.sh"
   export INSTALLER
 
-  STUB_DIR="${BATS_TEST_TMPDIR}/stubs"
+  # Self-managed sandbox dir. We do NOT use $BATS_TEST_TMPDIR because the
+  # bats packaged on ubuntu-22.04 (1.2.x) predates it (added in bats 1.4),
+  # which would leave it empty and try to mkdir /stubs. mktemp -d is the
+  # portable approach the repo's other suites already use.
+  OA_TMP="$(mktemp -d)"
+  export OA_TMP
+
+  STUB_DIR="${OA_TMP}/stubs"
   mkdir -p "$STUB_DIR"
 
   # By default every required package reports installed -> apt is skipped.
@@ -72,9 +79,9 @@ EOF
   export PATH="${STUB_DIR}:$PATH"
 
   # Defaults every test reuses; individual tests override as needed.
-  export INSTALL_PREFIX="${BATS_TEST_TMPDIR}/opt-onionarmor"
-  export SYMLINK_PATH="${BATS_TEST_TMPDIR}/bin/onionarmor"
-  export ONIONARMOR_ETC_DIR="${BATS_TEST_TMPDIR}/etc/onionarmor"
+  export INSTALL_PREFIX="${OA_TMP}/opt-onionarmor"
+  export SYMLINK_PATH="${OA_TMP}/bin/onionarmor"
+  export ONIONARMOR_ETC_DIR="${OA_TMP}/etc/onionarmor"
   export OS_RELEASE_FILE="$(_make_os_release debian)"
   export APT="${STUB_DIR}/apt-get"
   export GIT="${STUB_DIR}/git"
@@ -86,6 +93,10 @@ EOF
   # bats runs unprivileged (incl. GitHub Actions); skip the root gate except
   # in the one test that asserts it.
   export ONIONARMOR_INSTALL_ALLOW_NONROOT=1
+}
+
+teardown() {
+  if [ -n "${OA_TMP:-}" ] && [ -d "$OA_TMP" ]; then rm -rf "$OA_TMP"; fi
 }
 
 # --------------------------------------------------------------------------
@@ -179,7 +190,7 @@ EOF
 }
 
 @test "install.sh: missing /etc/os-release is rejected" {
-  export OS_RELEASE_FILE="${BATS_TEST_TMPDIR}/does-not-exist"
+  export OS_RELEASE_FILE="${OA_TMP}/does-not-exist"
   run bash "$INSTALLER"
   [ "$status" -ne 0 ]
   [[ "$output" == *"Debian / Ubuntu only"* ]]
@@ -335,7 +346,7 @@ EOF
 }
 
 @test "install.sh: never stages GRUB kernel lockdown" {
-  export ONIONARMOR_GRUB_FILE="${BATS_TEST_TMPDIR}/grub"   # installer must ignore this
+  export ONIONARMOR_GRUB_FILE="${OA_TMP}/grub"   # installer must ignore this
   run bash "$INSTALLER"
   [ "$status" -eq 0 ]
   [ ! -e "$ONIONARMOR_GRUB_FILE" ]
@@ -364,11 +375,11 @@ EOF
   # opt-in apply writes managed files here, not into the host's /etc.
   export ONIONARMOR_INSTALL_ROLE="tor-relay"
   export ONIONARMOR_ROLES_DIR="${REPO_ROOT}/roles"
-  export ONIONARMOR_SYSCTL_DIR="${BATS_TEST_TMPDIR}/sysctl.d"
+  export ONIONARMOR_SYSCTL_DIR="${OA_TMP}/sysctl.d"
   export ONIONARMOR_SYSCTL_CMD="${REPO_ROOT}/tests/fixtures/fake-sysctl"
-  export ONIONARMOR_AUDIT_LOG="${BATS_TEST_TMPDIR}/audit.log"
+  export ONIONARMOR_AUDIT_LOG="${OA_TMP}/audit.log"
   export ONIONARMOR_SKIP_RELOAD=yes
-  export FAKE_SYSCTL_STATE="${BATS_TEST_TMPDIR}/sysctl-state"
+  export FAKE_SYSCTL_STATE="${OA_TMP}/sysctl-state"
   mkdir -p "$ONIONARMOR_SYSCTL_DIR"
   cp "${REPO_ROOT}/tests/fixtures/debian13-relay-baseline.state" "$FAKE_SYSCTL_STATE"
 
