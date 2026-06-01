@@ -111,7 +111,8 @@ say "detected: ${PRETTY_NAME:-$OS_ID}"
 kernel_release="${ONIONARMOR_KERNEL_RELEASE:-$(uname -r)}"
 kernel_mm="${kernel_release%%-*}"                 # strip -generic / -amd64 etc.
 k_major="${kernel_mm%%.*}"
-k_rest="${kernel_mm#*.}"; k_minor="${k_rest%%.*}"
+k_rest="${kernel_mm#*.}"
+[ "$k_rest" = "$kernel_mm" ] && k_minor="0" || k_minor="${k_rest%%.*}"
 min_major="${ONIONARMOR_INSTALL_MIN_KERNEL%%.*}"
 min_minor="${ONIONARMOR_INSTALL_MIN_KERNEL#*.}"
 case "$k_major$k_minor$min_major$min_minor" in
@@ -203,7 +204,30 @@ else
 fi
 
 # ---- 10. summary --------------------------------------------------------
-cat <<EOF
+if [ -n "${ONIONARMOR_INSTALL_ROLE:-}" ]; then
+  cat <<EOF
+
+[install] onionarmor installed at $INSTALL_PREFIX
+[install] CLI on PATH at $SYMLINK_PATH
+[install] $applied_note
+
+What this installer did NOT do (by design):
+  * It did NOT apply kernel lockdown. That stays behind the explicit
+    \`onionarmor apply-lockdown\` subcommand and never auto-reboots.
+
+Next steps — apply kernel lockdown (Phase 2):
+
+  # Inspect the lockdown settings before applying.
+  onionarmor show-lockdown
+
+  # Apply and stage GRUB lockdown (requires reboot to take effect).
+  sudo onionarmor apply-lockdown
+
+Available roles: tor-relay, eval-host, receiver.
+Run \`onionarmor help\` for the full command set.
+EOF
+else
+  cat <<EOF
 
 [install] onionarmor installed at $INSTALL_PREFIX
 [install] CLI on PATH at $SYMLINK_PATH
@@ -228,3 +252,4 @@ Next steps — apply a hardening posture (Phase 1 sysctls):
 Available roles: tor-relay, eval-host, receiver.
 Run \`onionarmor help\` for the full command set.
 EOF
+fi
