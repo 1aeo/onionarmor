@@ -69,7 +69,6 @@ REQUIRED_APT_PACKAGES=(
 )
 
 say()  { printf '[install] %s\n' "$*"; }
-warn() { printf '[install] warning: %s\n' "$*" >&2; }
 die()  { printf '[install] error: %s\n' "$*" >&2; exit 1; }
 
 # ---- 1. root check ------------------------------------------------------
