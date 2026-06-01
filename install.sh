@@ -203,7 +203,29 @@ else
 fi
 
 # ---- 10. summary --------------------------------------------------------
-cat <<EOF
+if [ -n "${ONIONARMOR_INSTALL_ROLE:-}" ]; then
+  cat <<EOF
+
+[install] onionarmor installed at $INSTALL_PREFIX
+[install] CLI on PATH at $SYMLINK_PATH
+[install] $applied_note
+
+What this installer did NOT do (by design):
+  * It did NOT apply kernel lockdown. That stays behind the explicit
+    \`onionarmor apply-lockdown\` subcommand and never auto-reboots.
+
+Next steps — verify your hardening posture:
+
+  # Audit the applied sysctl settings.
+  onionarmor audit
+
+  # Optionally apply kernel lockdown (requires reboot).
+  sudo onionarmor apply-lockdown
+
+Run \`onionarmor help\` for the full command set.
+EOF
+else
+  cat <<EOF
 
 [install] onionarmor installed at $INSTALL_PREFIX
 [install] CLI on PATH at $SYMLINK_PATH
@@ -228,3 +250,4 @@ Next steps — apply a hardening posture (Phase 1 sysctls):
 Available roles: tor-relay, eval-host, receiver.
 Run \`onionarmor help\` for the full command set.
 EOF
+fi
