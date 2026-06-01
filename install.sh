@@ -114,7 +114,8 @@ k_major="${kernel_mm%%.*}"
 k_rest="${kernel_mm#*.}"
 [ "$k_rest" = "$kernel_mm" ] && k_minor="0" || k_minor="${k_rest%%.*}"
 min_major="${ONIONARMOR_INSTALL_MIN_KERNEL%%.*}"
-min_minor="${ONIONARMOR_INSTALL_MIN_KERNEL#*.}"
+min_rest="${ONIONARMOR_INSTALL_MIN_KERNEL#*.}"
+[ "$min_rest" = "$ONIONARMOR_INSTALL_MIN_KERNEL" ] && min_minor="0" || min_minor="${min_rest%%.*}"
 case "$k_major$k_minor$min_major$min_minor" in
   *[!0-9]*) die "could not parse kernel version: $kernel_release" ;;
 esac
