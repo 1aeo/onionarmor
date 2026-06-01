@@ -110,7 +110,9 @@ say "detected: ${PRETTY_NAME:-$OS_ID}"
 kernel_release="${ONIONARMOR_KERNEL_RELEASE:-$(uname -r)}"
 kernel_mm="${kernel_release%%-*}"                 # strip -generic / -amd64 etc.
 k_major="${kernel_mm%%.*}"
-k_rest="${kernel_mm#*.}"; k_minor="${k_rest%%.*}"
+k_rest="${kernel_mm#*.}"
+[ "$k_rest" != "$kernel_mm" ] || die "could not parse kernel version: $kernel_release"
+k_minor="${k_rest%%.*}"
 min_major="${ONIONARMOR_INSTALL_MIN_KERNEL%%.*}"
 min_minor="${ONIONARMOR_INSTALL_MIN_KERNEL#*.}"
 case "$k_major$k_minor$min_major$min_minor" in
