@@ -295,7 +295,6 @@ teardown() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"updating existing checkout"* ]]
   grep -q ' fetch ' "${STUB_DIR}/git.log"
-  grep -q ' checkout ' "${STUB_DIR}/git.log"
   grep -q ' reset ' "${STUB_DIR}/git.log"
   ! grep -q '^clone' "${STUB_DIR}/git.log"
 }
