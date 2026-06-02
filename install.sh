@@ -168,8 +168,10 @@ else
   fi
   mkdir -p "$INSTALL_PREFIX"
   say "cloning $ONIONARMOR_REPO_URL ($ONIONARMOR_REPO_REF) -> $INSTALL_PREFIX"
-  "$GIT" clone --quiet --branch "$ONIONARMOR_REPO_REF" \
-    "$ONIONARMOR_REPO_URL" "$INSTALL_PREFIX"
+  "$GIT" clone --quiet "$ONIONARMOR_REPO_URL" "$INSTALL_PREFIX"
+  "$GIT" -C "$INSTALL_PREFIX" fetch --quiet origin "$ONIONARMOR_REPO_REF"
+  "$GIT" -C "$INSTALL_PREFIX" checkout --quiet "$ONIONARMOR_REPO_REF"
+  "$GIT" -C "$INSTALL_PREFIX" reset --quiet --hard FETCH_HEAD
 fi
 
 CLI="$INSTALL_PREFIX/bin/onionarmor"
