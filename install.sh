@@ -161,7 +161,6 @@ if [ -d "$INSTALL_PREFIX/.git" ]; then
 Commit or stash them, or re-run with ONIONARMOR_INSTALL_FORCE=1 to discard them."
   fi
   "$GIT" -C "$INSTALL_PREFIX" fetch --quiet origin "$ONIONARMOR_REPO_REF"
-  "$GIT" -C "$INSTALL_PREFIX" checkout --quiet "$ONIONARMOR_REPO_REF"
   "$GIT" -C "$INSTALL_PREFIX" reset --quiet --hard FETCH_HEAD
 else
   if [ -e "$INSTALL_PREFIX" ] && [ -n "$(ls -A "$INSTALL_PREFIX" 2>/dev/null)" ]; then
