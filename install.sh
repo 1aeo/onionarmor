@@ -160,8 +160,10 @@ if [ -d "$INSTALL_PREFIX/.git" ]; then
     die "$INSTALL_PREFIX has uncommitted local changes; refusing to hard-reset. \
 Commit or stash them, or re-run with ONIONARMOR_INSTALL_FORCE=1 to discard them."
   fi
-  "$GIT" -C "$INSTALL_PREFIX" fetch --quiet origin "$ONIONARMOR_REPO_REF"
-  "$GIT" -C "$INSTALL_PREFIX" reset --quiet --hard FETCH_HEAD
+  "$GIT" -C "$INSTALL_PREFIX" fetch --quiet origin "$ONIONARMOR_REPO_REF" \
+    || die "git fetch failed — check network / repo access and re-run"
+  "$GIT" -C "$INSTALL_PREFIX" reset --quiet --hard FETCH_HEAD \
+    || die "git reset failed — repo may be corrupted; remove $INSTALL_PREFIX and re-run"
 else
   if [ -e "$INSTALL_PREFIX" ] && [ -n "$(ls -A "$INSTALL_PREFIX" 2>/dev/null)" ]; then
     die "$INSTALL_PREFIX exists and is non-empty but is not a git checkout; refusing to clobber"
@@ -169,7 +171,8 @@ else
   mkdir -p "$INSTALL_PREFIX"
   say "cloning $ONIONARMOR_REPO_URL ($ONIONARMOR_REPO_REF) -> $INSTALL_PREFIX"
   "$GIT" clone --quiet --branch "$ONIONARMOR_REPO_REF" \
-    "$ONIONARMOR_REPO_URL" "$INSTALL_PREFIX"
+    "$ONIONARMOR_REPO_URL" "$INSTALL_PREFIX" \
+    || die "git clone failed — check network / repo URL / ref ($ONIONARMOR_REPO_REF) and re-run"
 fi
 
 CLI="$INSTALL_PREFIX/bin/onionarmor"
