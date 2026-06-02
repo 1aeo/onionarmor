@@ -24,6 +24,16 @@ Phase 1 — sysctl tunings only (25 keys, three role profiles). Kernel-lockdown 
 curl -sSL https://raw.githubusercontent.com/1aeo/onionarmor/main/install.sh | sudo bash
 ```
 
+> **Supply-chain note.** This pipes branch-tip (`main`) code straight into
+> `sudo bash`, which is convenient but non-reproducible. To pin and review a
+> fixed revision before running it as root:
+>
+> ```sh
+> curl -sSLO https://raw.githubusercontent.com/1aeo/onionarmor/<tag-or-sha>/install.sh
+> less install.sh                                  # review before running
+> sudo ONIONARMOR_REPO_REF=<tag-or-sha> bash install.sh
+> ```
+
 The installer is conservative and idempotent (safe to re-run). It:
 
 - refuses to run as non-root, on a non-Debian/Ubuntu distro, on too-old a bash, or on a kernel too old for the role sysctl keys (≥ 5.2);

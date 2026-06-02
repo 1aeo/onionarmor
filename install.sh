@@ -153,6 +153,13 @@ fi
 # ---- 6. clone or update the repo ---------------------------------------
 if [ -d "$INSTALL_PREFIX/.git" ]; then
   say "updating existing checkout at $INSTALL_PREFIX"
+  # Refuse to clobber local edits. The hard reset below discards anything not
+  # committed, so a dirty checkout would silently lose operator/local changes.
+  if [ -n "$("$GIT" -C "$INSTALL_PREFIX" status --porcelain 2>/dev/null)" ] \
+     && [ "${ONIONARMOR_INSTALL_FORCE:-0}" != "1" ]; then
+    die "$INSTALL_PREFIX has uncommitted local changes; refusing to hard-reset. \
+Commit or stash them, or re-run with ONIONARMOR_INSTALL_FORCE=1 to discard them."
+  fi
   "$GIT" -C "$INSTALL_PREFIX" fetch --quiet origin "$ONIONARMOR_REPO_REF"
   "$GIT" -C "$INSTALL_PREFIX" checkout --quiet "$ONIONARMOR_REPO_REF"
   "$GIT" -C "$INSTALL_PREFIX" reset --quiet --hard FETCH_HEAD
