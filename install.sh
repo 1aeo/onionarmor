@@ -31,7 +31,9 @@
 #   INSTALL_PREFIX                      install root (default /opt/onionarmor)
 #   SYMLINK_PATH                        CLI symlink (default /usr/local/sbin/onionarmor)
 #   ONIONARMOR_REPO_URL                 override the git remote
-#   ONIONARMOR_REPO_REF                 branch / tag to check out (default main)
+#   ONIONARMOR_REPO_REF                 branch / tag / SHA to check out (default main)
+#   ONIONARMOR_INSTALL_FORCE=1          on update, discard uncommitted local
+#                                       changes in $INSTALL_PREFIX (default 0)
 #   ONIONARMOR_ETC_DIR                  host config dir (default /etc/onionarmor)
 #   APT                                 apt-get binary (default apt-get; tests stub this)
 #   GIT                                 git binary (default git; tests stub this)
@@ -154,7 +156,12 @@ if [ -d "$INSTALL_PREFIX/.git" ]; then
   say "updating existing checkout at $INSTALL_PREFIX"
   # Refuse to clobber local edits. The hard reset below discards anything not
   # committed, so a dirty checkout would silently lose operator/local changes.
-  if [ -n "$("$GIT" -C "$INSTALL_PREFIX" status --porcelain 2>/dev/null)" ] \
+  # Capture the status output and fail closed: if `git status` itself errors,
+  # `$(...)` failure does not reliably stop the script under `set -e` inside a
+  # test, so treat any non-zero exit as "cannot prove clean" and abort.
+  dirty_status="$("$GIT" -C "$INSTALL_PREFIX" status --porcelain)" \
+    || die "failed to inspect local changes in $INSTALL_PREFIX — aborting before hard-reset"
+  if [ -n "$dirty_status" ] \
      && [ "${ONIONARMOR_INSTALL_FORCE:-0}" != "1" ]; then
     die "$INSTALL_PREFIX has uncommitted local changes; refusing to hard-reset. \
 Commit or stash them, or re-run with ONIONARMOR_INSTALL_FORCE=1 to discard them."
