@@ -59,6 +59,17 @@ load test_helper
   [[ "$output" == *"still active"* ]]
 }
 
+@test "audit --no-mask-resolved: running systemd-resolved is a warning, not a failure" {
+  # --no-mask-resolved leaves systemd-resolved enabled+active by design; audit
+  # must honour the same flag and not score that red (Bugbot audit.sh:58-68).
+  bash "$APPLY" --no-mask-resolved >/dev/null
+  printf 'enabled\n' > "$STUB_STATE/enabled/systemd-resolved"
+  printf 'active\n'  > "$STUB_STATE/active/systemd-resolved"
+  run bash "$AUDIT" --no-mask-resolved
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"left as-is"* ]]
+}
+
 @test "audit: RED on a plaintext :53 forwarder (Do53 leak)" {
   # --no-verify lets the bad config land; audit is what must catch the leak.
   bash "$APPLY" --no-verify --upstreams '8.8.8.8@53#dns.google' >/dev/null
