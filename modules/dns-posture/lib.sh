@@ -241,11 +241,16 @@ dns_render_snippet() {
 }
 
 # dns_interface_addrs: print the unbound interface addresses, one per line.
-# Default loopback listener binds both 127.0.0.1 and ::1.
+# Must stay dual-stack-consistent with dns_stub_addrs: when resolv.conf lists
+# both loopback families (127.0.0.1 + ::1), unbound has to bind both families
+# too, otherwise resolv.conf advertises a nameserver unbound never listens on.
+# A loopback/default listener binds both loopback addrs; a wildcard listener
+# binds both wildcard families.
 dns_interface_addrs() {
   case "$DNS_LISTEN" in
-    127.0.0.1) printf '127.0.0.1\n::1\n' ;;
-    *)         printf '%s\n' "$DNS_LISTEN" ;;
+    127.0.0.1|"") printf '127.0.0.1\n::1\n' ;;
+    0.0.0.0|::)   printf '0.0.0.0\n::\n' ;;
+    *)            printf '%s\n' "$DNS_LISTEN" ;;
   esac
 }
 
