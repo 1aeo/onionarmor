@@ -167,7 +167,21 @@ if [ -d "$INSTALL_PREFIX/.git" ]; then
 Commit or stash them, or re-run with ONIONARMOR_INSTALL_FORCE=1 to discard them."
   fi
   "$GIT" -C "$INSTALL_PREFIX" fetch --quiet origin "$ONIONARMOR_REPO_REF"
-  "$GIT" -C "$INSTALL_PREFIX" checkout --quiet "$ONIONARMOR_REPO_REF"
+  # Check for unpushed local commits that would be lost by hard reset.
+  current_head="$("$GIT" -C "$INSTALL_PREFIX" rev-parse HEAD 2>/dev/null || echo "")"
+  if [ -n "$current_head" ]; then
+    merge_base="$("$GIT" -C "$INSTALL_PREFIX" merge-base HEAD FETCH_HEAD 2>/dev/null || echo "$current_head")"
+    if [ "$current_head" != "$merge_base" ] && [ "$current_head" != "$("$GIT" -C "$INSTALL_PREFIX" rev-parse FETCH_HEAD 2>/dev/null || echo "")" ] \
+       && [ "${ONIONARMOR_INSTALL_FORCE:-0}" != "1" ]; then
+      die "$INSTALL_PREFIX has unpushed local commits; refusing to hard-reset. \
+Push them first, or re-run with ONIONARMOR_INSTALL_FORCE=1 to discard them."
+    fi
+  fi
+  checkout_flags="--quiet"
+  if [ "${ONIONARMOR_INSTALL_FORCE:-0}" = "1" ]; then
+    checkout_flags="--quiet --force"
+  fi
+  "$GIT" -C "$INSTALL_PREFIX" checkout $checkout_flags "$ONIONARMOR_REPO_REF"
   "$GIT" -C "$INSTALL_PREFIX" reset --quiet --hard FETCH_HEAD
 else
   if [ -e "$INSTALL_PREFIX" ] && [ -n "$(ls -A "$INSTALL_PREFIX" 2>/dev/null)" ]; then
