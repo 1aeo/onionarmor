@@ -170,9 +170,17 @@ else
   fi
   mkdir -p "$INSTALL_PREFIX"
   say "cloning $ONIONARMOR_REPO_URL ($ONIONARMOR_REPO_REF) -> $INSTALL_PREFIX"
-  "$GIT" clone --quiet --branch "$ONIONARMOR_REPO_REF" \
-    "$ONIONARMOR_REPO_URL" "$INSTALL_PREFIX" \
-    || die "git clone failed — check network / repo URL / ref ($ONIONARMOR_REPO_REF) and re-run"
+  # Clone, then fetch + reset to the requested ref. `clone --branch` only
+  # accepts branch/tag names, so it rejects the commit SHAs the README
+  # recommends for pinning. Fetching the ref into FETCH_HEAD and hard-resetting
+  # handles branches, tags, and SHAs uniformly (same mechanism as the update
+  # path above).
+  "$GIT" clone --quiet "$ONIONARMOR_REPO_URL" "$INSTALL_PREFIX" \
+    || die "git clone failed — check network / repo URL and re-run"
+  "$GIT" -C "$INSTALL_PREFIX" fetch --quiet origin "$ONIONARMOR_REPO_REF" \
+    || die "git fetch failed — check the ref ($ONIONARMOR_REPO_REF) and re-run"
+  "$GIT" -C "$INSTALL_PREFIX" reset --quiet --hard FETCH_HEAD \
+    || die "git reset failed — repo may be corrupted; remove $INSTALL_PREFIX and re-run"
 fi
 
 CLI="$INSTALL_PREFIX/bin/onionarmor"
