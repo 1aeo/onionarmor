@@ -59,7 +59,16 @@ fi
 # --- 4. systemd-resolved masked ------------------------------------------
 en=$("$ONIONARMOR_DNS_SYSTEMCTL" is-enabled systemd-resolved 2>/dev/null || true)
 act=$("$ONIONARMOR_DNS_SYSTEMCTL" is-active systemd-resolved 2>/dev/null || true)
-if [ "$en" = "masked" ]; then
+if [ "$DNS_MASK_RESOLVED" -eq 0 ]; then
+  # apply was (or can be) run with --no-mask-resolved: masking is opt-out here,
+  # so a running systemd-resolved is the operator's choice, not a red failure.
+  # Pass the same --no-mask-resolved flag to audit to get this relaxed check.
+  if [ "$en" = "masked" ]; then
+    dns_check green  "systemd-resolved masked" "is-enabled = masked"
+  else
+    dns_check yellow "systemd-resolved masked" "--no-mask-resolved: left as-is (is-enabled=$en, is-active=$act)"
+  fi
+elif [ "$en" = "masked" ]; then
   dns_check green "systemd-resolved masked" "is-enabled = masked"
 elif [ "$act" = "active" ]; then
   dns_check red "systemd-resolved masked" "still active (is-enabled=$en)"
