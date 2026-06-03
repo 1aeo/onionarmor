@@ -26,6 +26,8 @@ export ONIONARMOR_PREFIX
 . "$ONIONARMOR_PREFIX/lib/role.sh"
 # shellcheck source=lib/sysctl_ops.sh
 . "$ONIONARMOR_PREFIX/lib/sysctl_ops.sh"
+# shellcheck source=lib/module.sh
+. "$ONIONARMOR_PREFIX/lib/module.sh"
 
 # ---------------------------------------------------------------------------
 # Usage / help.
@@ -37,7 +39,7 @@ onionarmor — apply hardening recommendations idempotently, with rollback.
 USAGE
   onionarmor <command> [options]
 
-COMMANDS
+COMMANDS (sysctl roles)
   list      [--role <name>]              Show recommended sysctls + values.
   diff      [--role <name>]              Show current host values vs target.
   apply     [--role <name>] [--dry-run] [--first-run]
@@ -49,6 +51,15 @@ COMMANDS
   apply-lockdown [--no-reboot]           Stage `lockdown=integrity` in GRUB
                                          cmdline (needs reboot). Documented
                                          but never auto-rebooted.
+
+COMMANDS (modules)
+  list-modules                           List installed hardening modules.
+  apply   --module <name> [module opts]  Apply a module's posture.
+  audit   --module <name> [module opts]  Green/yellow/red status; non-zero
+                                         exit if any check is red.
+  revert  --module <name> [module opts]  Undo a module's posture.
+  Run `onionarmor apply --module <name> --help` for that module's own flags.
+
   help                                   Show this help.
 
 SAFETY RAILS
@@ -303,7 +314,24 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# Dispatch.
+# cmd_list_modules — list installed hardening modules + one-line descriptions.
+# ---------------------------------------------------------------------------
+cmd_list_modules() {
+  local any=0 name desc
+  while read -r name; do
+    [ -n "$name" ] || continue
+    any=1
+    desc=$(module_describe "$name")
+    printf '%-16s %s\n' "$name" "$desc"
+  done < <(module_list)
+  if [ "$any" -eq 0 ]; then
+    info "no modules installed under $ONIONARMOR_MODULES_DIR"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Dispatch. apply/audit/revert route to a MODULE when --module is present,
+# otherwise keep the existing role-based sysctl behaviour.
 # ---------------------------------------------------------------------------
 main() {
   [ $# -ge 1 ] || { usage; exit 2; }
@@ -311,9 +339,18 @@ main() {
   case "$cmd" in
     list)            cmd_list "$@" ;;
     diff)            cmd_diff "$@" ;;
-    apply)           cmd_apply "$@" ;;
+    apply)
+      if args_have_module "$@"; then module_dispatch apply "$@"
+      else cmd_apply "$@"; fi ;;
+    audit)
+      if args_have_module "$@"; then module_dispatch audit "$@"
+      else cmd_audit "$@"; fi ;;
+    revert)
+      args_have_module "$@" \
+        || die "revert requires --module <name> (for sysctl roles use: rollback --role <r>)"
+      module_dispatch revert "$@" ;;
     rollback)        cmd_rollback "$@" ;;
-    audit)           cmd_audit "$@" ;;
+    list-modules)    cmd_list_modules "$@" ;;
     apply-lockdown)  cmd_apply_lockdown "$@" ;;
     help|--help|-h)  usage ;;
     *)               die "unknown command: $cmd (try: onionarmor help)" ;;

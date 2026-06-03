@@ -8,6 +8,7 @@
 # Path configuration. Defaults are production paths; tests override via env.
 # ---------------------------------------------------------------------------
 : "${ONIONARMOR_ROLES_DIR:=$ONIONARMOR_PREFIX/roles}"
+: "${ONIONARMOR_MODULES_DIR:=$ONIONARMOR_PREFIX/modules}"
 : "${ONIONARMOR_ETC_DIR:=/etc/onionarmor}"
 : "${ONIONARMOR_SYSCTL_DIR:=/etc/sysctl.d}"
 : "${ONIONARMOR_AUDIT_LOG:=/var/log/onionarmor/audit.log}"
