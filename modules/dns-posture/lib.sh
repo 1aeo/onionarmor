@@ -107,6 +107,7 @@ dns_parse_flags() {
 
 dns_validate_flags() {
   case "$DNS_LISTEN_PORT" in (*[!0-9]*|"") die "dns-posture: --listen-port must be numeric: $DNS_LISTEN_PORT" ;; esac
+  [ "$DNS_LISTEN_PORT" -eq 53 ] || die "dns-posture: --listen-port must be 53 (resolv.conf cannot specify ports; non-53 breaks system DNS)"
   case "$DNS_NUM_THREADS" in (*[!0-9]*|"") die "dns-posture: --num-threads must be numeric: $DNS_NUM_THREADS" ;; esac
   [ -n "$DNS_UPSTREAMS" ] || die "dns-posture: --upstreams must not be empty"
   local entry
