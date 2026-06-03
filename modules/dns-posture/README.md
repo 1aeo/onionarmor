@@ -51,7 +51,7 @@ Every fleet default is overridable. Defaults shown in **bold**.
 
 Default upstream set (all DoT `:853`, SNI-pinned):
 
-```
+```text
 1.1.1.1@853#cloudflare-dns.com, 1.0.0.1@853#cloudflare-dns.com   # Cloudflare
 9.9.9.9@853#dns.quad9.net, 149.112.112.112@853#dns.quad9.net     # Quad9
 8.8.8.8@853#dns.google                                            # Google

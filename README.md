@@ -61,6 +61,14 @@ git clone https://github.com/1aeo/onionarmor.git /opt/onionarmor
 sudo ln -s /opt/onionarmor/bin/onionarmor /usr/local/sbin/onionarmor
 ```
 
+> **Pin and review before you run.** `onionarmor` mutates host state as root, so
+> don't track branch tip blindly. Check out a reviewed tag or commit SHA and
+> inspect the diff before putting `bin/` on `PATH`:
+>
+> ```sh
+> git -C /opt/onionarmor checkout <tag-or-sha>   # pin to a reviewed revision
+> ```
+
 No dependencies beyond a POSIX shell, `awk`, `sysctl`, and (for the optional CI lint) `shellcheck`.
 
 ## Quickstart — tor-relay
