@@ -48,7 +48,7 @@ curl -sSL https://raw.githubusercontent.com/1aeo/onionarmor/main/install.sh \
   | sudo ONIONARMOR_INSTALL_ROLE=tor-relay bash
 ```
 
-Common knobs: `INSTALL_PREFIX` (default `/opt/onionarmor`), `SYMLINK_PATH` (default `/usr/local/sbin/onionarmor`), `ONIONARMOR_REPO_REF` (default `main`). See the header of [`install.sh`](install.sh) for the full list.
+Common knobs: `INSTALL_PREFIX` (default `/opt/onionarmor`), `SYMLINK_PATH` (default `/usr/local/sbin/onionarmor`), `ONIONARMOR_REPO_REF` (default `main`; accepts a branch, tag, or commit SHA), `ONIONARMOR_INSTALL_FORCE` (default `0`; set to `1` to discard uncommitted local changes in `$INSTALL_PREFIX` when updating an existing checkout). See the header of [`install.sh`](install.sh) for the full list.
 
 ### Manual
 
@@ -132,9 +132,9 @@ Each sysctl in a role config carries:
 2. **Host role.conf cross-check.** `apply` and `rollback` refuse unless `/etc/onionarmor/role.conf` contains `role=<r>` matching the `--role` flag. This prevents applying a `tor-relay` posture to a workstation by mistake.
 3. **Backup before every write.** The prior `/etc/sysctl.d/99-onionarmor-<r>.conf` is copied to `…conf.bak.<UTC-ts>` before the new one is written. Any historical backup can be restored manually; `rollback` restores the most recent.
 4. **First-run confirmation.** `apply --first-run` requires interactive `yes` before writing. Subsequent applies are direct.
-5. **Idempotent.** Re-running `apply` with no role-config change produces the same managed file and zero `apply.change` audit entries.
+5. **Convergent.** Re-running `apply` with no role-config change preserves the same sysctl posture and writes zero `apply.change` audit entries. (The managed file is rewritten with a fresh `Written:` header timestamp, so the bytes are not guaranteed identical — the *posture* is.)
 6. **Reboot-required items gated.** Kernel lockdown is never applied by `apply`; only `apply-lockdown` stages it. `apply-lockdown` itself never auto-reboots.
-7. **Tamper-evident audit log.** Every apply, backup, and rollback is appended to `/var/log/onionarmor/audit.log` with timestamp, operator, and details.
+7. **Append-only audit log.** Every apply, backup, and rollback is appended to `/var/log/onionarmor/audit.log` with timestamp, operator, and details. It is a plain operator trail, not cryptographically tamper-evident (no hash chaining or signing) — see [SECURITY.md](SECURITY.md).
 
 ## Reference data
 
