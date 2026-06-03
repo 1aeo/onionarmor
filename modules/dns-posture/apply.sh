@@ -119,7 +119,15 @@ if ! "$ONIONARMOR_DNS_UNBOUND_CHECKCONF" >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Pin resolv.conf at the local resolver (back up the original ONCE).
+# 5. (Re)start unbound so the posture is live BEFORE the DNS cutover.
+# ---------------------------------------------------------------------------
+"$ONIONARMOR_DNS_SYSTEMCTL" enable --now unbound >/dev/null 2>&1 || true
+unbound_restart_failed=0
+"$ONIONARMOR_DNS_SYSTEMCTL" restart unbound >/dev/null 2>&1 \
+  || { warn "could not restart unbound via systemctl — a running instance may still be serving the OLD config"; unbound_restart_failed=1; }
+
+# ---------------------------------------------------------------------------
+# 6. Pin resolv.conf at the local resolver (back up the original ONCE).
 # ---------------------------------------------------------------------------
 mkdir -p "$ONIONARMOR_DNS_STATE_DIR"
 if [ ! -e "$backup" ] && [ -e "$DNS_RESOLV_CONF" ]; then
@@ -152,7 +160,7 @@ if [ "$DNS_IMMUTABLE_RESOLV" -eq 1 ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 6. Mask + stop systemd-resolved (and reap stragglers).
+# 7. Mask + stop systemd-resolved (and reap stragglers).
 # ---------------------------------------------------------------------------
 if [ "$DNS_MASK_RESOLVED" -eq 1 ]; then
   "$ONIONARMOR_DNS_SYSTEMCTL" disable --now systemd-resolved >/dev/null 2>&1 || true
@@ -162,14 +170,6 @@ if [ "$DNS_MASK_RESOLVED" -eq 1 ]; then
   audit_log dns.apply.mask-resolved "masked=systemd-resolved"
   info "masked + stopped systemd-resolved"
 fi
-
-# ---------------------------------------------------------------------------
-# 7. (Re)start unbound so the posture is live.
-# ---------------------------------------------------------------------------
-"$ONIONARMOR_DNS_SYSTEMCTL" enable --now unbound >/dev/null 2>&1 || true
-unbound_restart_failed=0
-"$ONIONARMOR_DNS_SYSTEMCTL" restart unbound >/dev/null 2>&1 \
-  || { warn "could not restart unbound via systemctl — a running instance may still be serving the OLD config"; unbound_restart_failed=1; }
 
 # ---------------------------------------------------------------------------
 # 8. Verify (default on). Failures are surfaced but do not unwind the apply.
