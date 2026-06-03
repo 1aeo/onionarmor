@@ -167,13 +167,16 @@ fi
 # 7. (Re)start unbound so the posture is live.
 # ---------------------------------------------------------------------------
 "$ONIONARMOR_DNS_SYSTEMCTL" enable --now unbound >/dev/null 2>&1 || true
+unbound_restart_failed=0
 "$ONIONARMOR_DNS_SYSTEMCTL" restart unbound >/dev/null 2>&1 \
-  || warn "could not restart unbound via systemctl"
+  || { warn "could not restart unbound via systemctl — a running instance may still be serving the OLD config"; unbound_restart_failed=1; }
 
 # ---------------------------------------------------------------------------
 # 8. Verify (default on). Failures are surfaced but do not unwind the apply.
+# A failed unbound restart counts as a failure even when --no-verify is set:
+# the new config was never loaded, so apply must not exit 0.
 # ---------------------------------------------------------------------------
-verify_failed=0
+verify_failed=$unbound_restart_failed
 if [ "$DNS_VERIFY" -eq 1 ]; then
   if "$ONIONARMOR_DNS_UNBOUND_CHECKCONF" >/dev/null 2>&1; then
     info "verify: unbound-checkconf ok"
