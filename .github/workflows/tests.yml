@@ -25,8 +25,10 @@ jobs:
           bash --version | head -1
           bats --version
           awk --version 2>&1 | head -1 || awk -W version 2>&1 | head -1 || true
-      - name: Run tests
+      - name: Run core tests
         run: bats --tap tests/
+      - name: Run module tests
+        run: bats --tap modules/*/tests/bats/
 
   shellcheck:
     name: shellcheck
@@ -35,6 +37,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
-      - name: Lint bin/onionarmor + lib/* + install.sh
+      - name: Lint bin/onionarmor + lib/* + install.sh + modules
         run: |
-          shellcheck --severity=warning bin/onionarmor lib/*.sh install.sh tests/fixtures/fake-sysctl
+          shellcheck --severity=warning bin/onionarmor lib/*.sh install.sh tests/fixtures/fake-sysctl \
+            modules/*/*.sh
