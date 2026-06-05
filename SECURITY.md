@@ -146,6 +146,10 @@ Each hardening [module](README.md#modules) documents **what it does and does not
   - **Defends against** passive network observers, on-path DNS tampering/MITM, and an untrusted ISP/local resolver.
   - **Does _not_ defend against** a malicious-but-valid-PKI upstream, applications with hard-coded resolvers, or browser DoH bypass.
 
+- **`kernel-reserved-ports`** (reserve loopback tor ports from the kernel ephemeral source-port pool): see the [threat model](modules/kernel-reserved-ports/README.md#threat-model). This is **operational hardening, not a classic confidentiality/integrity control** — but with a real downstream availability implication:
+  - **Defends** relay **availability** on dense hosts: it removes a class of intermittent, density-dependent listener bind-failures where the kernel hands a tor instance's loopback service port (e.g. `MetricsPort 48082`) to another instance as an outbound *source* port. A tor instance that can't bind is a relay that drops out — and reliable honest capacity is anonymity-relevant, so uptime belongs in the posture.
+  - **Does _not_** firewall, authenticate, or encrypt those ports (protect `MetricsPort`/`ControlPort` at the application layer as usual); does _not_ govern who may connect to a listener — it only constrains the kernel's ephemeral *source*-port selection.
+
 ## Reporting a vulnerability
 
 Report security issues privately through either channel:
