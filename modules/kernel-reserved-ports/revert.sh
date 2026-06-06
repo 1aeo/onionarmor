@@ -18,17 +18,6 @@ backup=$(krp_backup_path)
 audit_log krp.revert.start "dropin=$dropin"
 
 # ---------------------------------------------------------------------------
-# 0. Remove stale apply-filters.conf (if present) to prevent audit --auto from
-# loading outdated filter parameters after revert.
-# ---------------------------------------------------------------------------
-filters_file=$(krp_filters_path)
-if [ -f "$filters_file" ]; then
-  rm -f "$filters_file" \
-    || warn "failed to remove stale filter state $filters_file"
-  info "removed stale filter state: $filters_file"
-fi
-
-# ---------------------------------------------------------------------------
 # 1. Back up the drop-in (if present) before removing it.
 # ---------------------------------------------------------------------------
 had_dropin=0
@@ -45,6 +34,18 @@ if [ -f "$dropin" ]; then
   info "removed drop-in: $dropin"
 else
   warn "no drop-in at $dropin — nothing to back up or remove"
+fi
+
+# ---------------------------------------------------------------------------
+# 1b. Remove the persisted apply-filters.conf — only AFTER the drop-in is gone,
+# so a failed backup/removal above (which dies) never leaves the filter state
+# out of sync with a drop-in that is still present.
+# ---------------------------------------------------------------------------
+filters_file=$(krp_filters_path)
+if [ -f "$filters_file" ]; then
+  rm -f "$filters_file" \
+    || warn "failed to remove stale filter state $filters_file"
+  info "removed filter state: $filters_file"
 fi
 
 # ---------------------------------------------------------------------------
