@@ -158,6 +158,30 @@ dropin_value() {
   [ "$(dropin_value)" = "48001-48001" ]
 }
 
+@test "apply: a value-taking flag with no value dies cleanly (no shift error)" {
+  run bash "$APPLY" --reserved-range 9050-9090 --auto-buffer
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--auto-buffer requires a value"* ]]
+  ! [[ "$output" == *"shift"* ]]
+}
+
+@test "apply: a noisy 'sysctl --system' exit does NOT fail apply when verify matches" {
+  # Regression: verify is authoritative. If --system exits nonzero (e.g. an
+  # unrelated drop-in failed) but the live value + /proc match, apply succeeds.
+  seed_metrics_fleet 48010 48050
+  KRP_SYSCTL_SYSTEM_RC=1 run bash "$APPLY" --auto
+  [ "$status" -eq 0 ]
+  [ "$(cat "$ONIONARMOR_KRP_PROC_FILE")" = "48010-48050" ]
+  [[ "$output" == *"matches drop-in"* ]]
+}
+
+@test "apply --no-verify: a failed 'sysctl --system' still fails the apply (exit 2)" {
+  # With verification off, the reload exit code is the only success signal.
+  seed_metrics_fleet 48010 48050
+  KRP_SYSCTL_SYSTEM_RC=1 run bash "$APPLY" --auto --no-verify
+  [ "$status" -eq 2 ]
+}
+
 @test "apply: writes audit-log entries" {
   seed_metrics_fleet 48010 48050
   run bash "$APPLY" --auto

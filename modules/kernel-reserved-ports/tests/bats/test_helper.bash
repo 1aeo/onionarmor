@@ -97,6 +97,9 @@ case "$1" in
       v=$(sed -n "s/^[[:space:]]*net\.ipv4\.ip_local_reserved_ports[[:space:]]*=[[:space:]]*//p" "$DROPIN" | tail -1)
       printf '%s' "$v" > "$PROC"
     fi
+    # Emulate a noisy --system that still loads our key (e.g. an unrelated
+    # drop-in failed): apply our value, then exit nonzero if asked to.
+    exit "${KRP_SYSCTL_SYSTEM_RC:-0}"
     ;;
   -w)
     kv=$2; k=${kv%%=*}; val=${kv#*=}

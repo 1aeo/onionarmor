@@ -32,7 +32,7 @@ many-instance hosts you least want flapping.
 
 The fix is to remove those loopback service ports from the ephemeral pool:
 
-```
+```ini
 net.ipv4.ip_local_reserved_ports = 48001-48249,29000-29299
 ```
 

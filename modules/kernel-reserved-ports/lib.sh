@@ -74,6 +74,14 @@ krp_set_defaults() {
   KRP_MIN_PORT=1024      # ignore well-known ports below this
 }
 
+# krp_need_val <flag> <count>: die unless a value-taking flag was given an
+# argument. Guards `shift 2` from "shift count out of range" on a trailing
+# valueless flag (e.g. `--auto-buffer` at the end of the args), routing the
+# error through our own die message instead of the shell builtin's.
+krp_need_val() {
+  [ "$2" -ge 2 ] || die "kernel-reserved-ports: $1 requires a value (try --help)"
+}
+
 # krp_parse_flags <args...>: populate KRP_* from the command line. Shared by all
 # three actions (revert ignores the ones that don't apply to it).
 krp_parse_flags() {
@@ -81,15 +89,15 @@ krp_parse_flags() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --auto)              KRP_AUTO=1; shift ;;
-      --reserved-range)    krp_add_range "${2:-}"; shift 2 ;;
+      --reserved-range)    krp_need_val "$1" "$#"; krp_add_range "$2"; shift 2 ;;
       --reserved-range=*)  krp_add_range "${1#--reserved-range=}"; shift ;;
-      --auto-buffer)       KRP_AUTO_BUFFER=${2:-}; shift 2 ;;
+      --auto-buffer)       krp_need_val "$1" "$#"; KRP_AUTO_BUFFER=$2; shift 2 ;;
       --auto-buffer=*)     KRP_AUTO_BUFFER=${1#--auto-buffer=}; shift ;;
-      --listen-ip)         KRP_LISTEN_IP=${2:-}; shift 2 ;;
+      --listen-ip)         krp_need_val "$1" "$#"; KRP_LISTEN_IP=$2; shift 2 ;;
       --listen-ip=*)       KRP_LISTEN_IP=${1#--listen-ip=}; shift ;;
-      --cluster-gap)       KRP_CLUSTER_GAP=${2:-}; shift 2 ;;
+      --cluster-gap)       krp_need_val "$1" "$#"; KRP_CLUSTER_GAP=$2; shift 2 ;;
       --cluster-gap=*)     KRP_CLUSTER_GAP=${1#--cluster-gap=}; shift ;;
-      --min-port)          KRP_MIN_PORT=${2:-}; shift 2 ;;
+      --min-port)          krp_need_val "$1" "$#"; KRP_MIN_PORT=$2; shift 2 ;;
       --min-port=*)        KRP_MIN_PORT=${1#--min-port=}; shift ;;
       --dry-run)           KRP_DRY_RUN=1; shift ;;
       --verify)            KRP_VERIFY=1; shift ;;
