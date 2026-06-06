@@ -390,22 +390,29 @@ EOF
 }
 
 # krp_load_apply_filters: if the state file exists and the current invocation
-# is in --auto mode with default filter values, load the persisted filters.
+# is in --auto mode, load the persisted filters for any parameters that are
+# still at their default values. CLI overrides take precedence.
 # This ensures audit --auto uses the same detection scope as the last apply.
 krp_load_apply_filters() {
   local filters_file; filters_file=$(krp_filters_path)
   [ -f "$filters_file" ] || return 0
   [ "$KRP_AUTO" -eq 1 ] || return 0
   
-  # Only load persisted filters if the user hasn't explicitly overridden them.
-  # The defaults are: LISTEN_IP="" MIN_PORT=1024 AUTO_BUFFER=0.
-  # If any filter is non-default, the user has explicitly set it — honor that.
-  local defaults_intact=1
-  [ -n "$KRP_LISTEN_IP" ] && defaults_intact=0
-  [ "$KRP_MIN_PORT" -ne 1024 ] && defaults_intact=0
-  [ "$KRP_AUTO_BUFFER" -ne 0 ] && defaults_intact=0
-  [ "$defaults_intact" -eq 0 ] && return 0
+  # Read saved values from the file. Initialize to defaults in case the file
+  # doesn't contain all keys (forward compat with older state files).
+  local saved_listen_ip="" saved_min_port=1024 saved_auto_buffer=0
+  while IFS='=' read -r key val; do
+    case "$key" in
+      KRP_LISTEN_IP) saved_listen_ip=$val ;;
+      KRP_MIN_PORT) saved_min_port=$val ;;
+      KRP_AUTO_BUFFER) saved_auto_buffer=$val ;;
+    esac
+  done < <(grep '^KRP_' "$filters_file")
   
-  # shellcheck source=/dev/null
-  . "$filters_file"
+  # Apply saved values only for parameters that are still at their defaults.
+  # The defaults are: LISTEN_IP="" MIN_PORT=1024 AUTO_BUFFER=0.
+  # If a parameter differs from its default, the user explicitly set it via CLI.
+  [ -z "$KRP_LISTEN_IP" ] && KRP_LISTEN_IP=$saved_listen_ip
+  [ "$KRP_MIN_PORT" -eq 1024 ] && KRP_MIN_PORT=$saved_min_port
+  [ "$KRP_AUTO_BUFFER" -eq 0 ] && KRP_AUTO_BUFFER=$saved_auto_buffer
 }
