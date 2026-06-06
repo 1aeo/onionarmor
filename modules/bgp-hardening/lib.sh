@@ -188,6 +188,7 @@ bgp_daemons_path()        { printf '%s\n' "$ONIONARMOR_BGP_DAEMONS"; }
 bgp_daemons_backup_path() { printf '%s/daemons.bak\n' "$ONIONARMOR_BGP_STATE_DIR"; }
 bgp_nft_backup_path()     { printf '%s/nftables-%s.bak\n' "$ONIONARMOR_BGP_STATE_DIR" "$BGP_NFT_TABLE"; }
 bgp_rpki_marker_path()    { printf '%s/rpki.applied\n' "$ONIONARMOR_BGP_STATE_DIR"; }
+bgp_gtsm_marker_path()    { printf '%s/gtsm.applied\n' "$ONIONARMOR_BGP_STATE_DIR"; }
 
 # --- FRR config auto-detection --------------------------------------------
 # bgp_detect_router_id: first `bgp router-id <ip>` in the FRR config, or empty.
@@ -308,9 +309,9 @@ bgp_render_ufw() {
   local p
   while IFS= read -r p; do
     [ -n "$p" ] || continue
-    printf 'ufw allow proto tcp from %s to any port 179\n' "$p"
+    printf 'allow proto tcp from %s to any port 179\n' "$p"
   done
-  printf 'ufw deny proto tcp to any port 179\n'
+  printf 'deny proto tcp to any port 179\n'
 }
 
 # --- RPKI + route-map FRR config ------------------------------------------

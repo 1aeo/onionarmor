@@ -109,7 +109,10 @@ fi
 if [ "$BGP_DO_FIREWALL" -eq 1 ]; then
   if [ "$BGP_FIREWALL" = "nftables" ]; then
     rendered_nft=$(printf '%s\n' "$peers" | bgp_render_nft)
-    if [ "$(bgp_nft_current)" = "$rendered_nft" ]; then
+    current_nft=$(bgp_nft_current)
+    # Normalize: extract only the table definition for comparison (skip comments, delete table)
+    rendered_normalized=$(printf '%s\n' "$rendered_nft" | sed -n '/^table inet/,/^}$/p' | grep -v '^delete table')
+    if [ "$current_nft" = "$rendered_normalized" ]; then
       info "firewall already current: nft table inet $BGP_NFT_TABLE"
     else
       # Snapshot the existing managed table (if any) for revert/debugging.
@@ -137,6 +140,8 @@ fi
 # 3. RPKI: install + run Routinator, configure FRR's rpki cache + route-map.
 # ---------------------------------------------------------------------------
 if [ "$BGP_RPKI" -eq 1 ]; then
+  # Warn if --rpki-source was passed but is not yet implemented.
+  [ -n "$BGP_RPKI_SOURCES" ] && warn "RPKI: --rpki-source is not yet implemented; using default RIR TALs"
   # Ensure the validator is running (install + enable only when needed).
   if bgp_service_active routinator; then
     info "RPKI: routinator already running"
@@ -172,6 +177,7 @@ fi
 # ---------------------------------------------------------------------------
 if [ "$BGP_GTSM" -eq 1 ]; then
   if printf '%s\n' "$peers" | bgp_render_gtsm_config | bgp_vtysh_apply; then
+    printf '%s\n' "$peers" > "$(bgp_gtsm_marker_path)"
     audit_log bgp.apply.gtsm "hops=$BGP_GTSM_HOPS peers=$peer_list_oneline"
     info "GTSM: set ttl-security hops $BGP_GTSM_HOPS per neighbor (requires peer cooperation to take effect)"
     frr_changed=1; any_changed=1

@@ -45,11 +45,12 @@ if [ "$BGP_FIREWALL" = "nftables" ]; then
   fi
 else
   # ufw: best-effort delete of the rules apply would have added.
+  peers=$(bgp_resolve_peers)
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     # shellcheck disable=SC2086  # controlled, space-split ufw delete command
     "$ONIONARMOR_BGP_UFW" delete $line >/dev/null 2>&1 || true
-  done < <(printf '' | bgp_render_ufw)
+  done < <(printf '%s\n' "$peers" | bgp_render_ufw)
   info "removed ufw tcp/179 rules (best-effort)"
 fi
 
@@ -67,11 +68,33 @@ if [ -e "$marker" ]; then
   audit_log bgp.revert.rpki "removed=$BGP_RPKI_ROUTEMAP"
   info "removed FRR rpki cache + route-map $BGP_RPKI_ROUTEMAP"
   touched=1
+  # Validator stays installed, just stopped + disabled (only if we enabled it).
+  "$ONIONARMOR_BGP_SYSTEMCTL" disable --now routinator >/dev/null 2>&1 \
+    && info "disabled routinator (left installed)" \
+    || info "routinator not disabled (not present or already inactive)"
 fi
-# Validator stays installed, just stopped + disabled.
-"$ONIONARMOR_BGP_SYSTEMCTL" disable --now routinator >/dev/null 2>&1 \
-  && info "disabled routinator (left installed)" \
-  || info "routinator not disabled (not present or already inactive)"
+
+# ---------------------------------------------------------------------------
+# 4. Remove GTSM / ttl-security configuration if we applied it.
+# ---------------------------------------------------------------------------
+gtsm_marker=$(bgp_gtsm_marker_path)
+if [ -e "$gtsm_marker" ]; then
+  gtsm_peers=$(cat "$gtsm_marker" 2>/dev/null || true)
+  if [ -n "$gtsm_peers" ]; then
+    {
+      while IFS= read -r p; do
+        [ -n "$p" ] || continue
+        printf 'no neighbor %s ttl-security hops\n' "$p"
+      done <<EOF
+$gtsm_peers
+EOF
+    } | bgp_vtysh_apply || warn "could not remove FRR GTSM config via vtysh"
+    audit_log bgp.revert.gtsm "removed_peers=$(printf '%s' "$gtsm_peers" | tr '\n' ' ')"
+    info "removed GTSM ttl-security configuration"
+    touched=1
+  fi
+  rm -f "$gtsm_marker" || true
+fi
 
 # ---------------------------------------------------------------------------
 # 4. Reload FRR gracefully so the restored config takes effect.
