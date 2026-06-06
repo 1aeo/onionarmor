@@ -20,7 +20,9 @@ audit_log krp.revert.start "dropin=$dropin"
 # ---------------------------------------------------------------------------
 # 1. Back up the drop-in (if present) before removing it.
 # ---------------------------------------------------------------------------
+dropin_was_present=0
 if [ -f "$dropin" ]; then
+  dropin_was_present=1
   mkdir -p "$ONIONARMOR_KRP_STATE_DIR" || die "cannot create $ONIONARMOR_KRP_STATE_DIR"
   cp -p "$dropin" "$backup" \
     || audit_fail_die krp.revert.fail "stage=backup" "failed to back up $dropin -> $backup"
@@ -40,7 +42,10 @@ fi
 # key was cleared when it wasn't. ONIONARMOR_SKIP_RELOAD leaves the live kernel
 # untouched (symmetric with apply, which skips the load under the same knob).
 # ---------------------------------------------------------------------------
-if [ "${ONIONARMOR_SKIP_RELOAD:-}" = "yes" ]; then
+if [ "$dropin_was_present" -eq 0 ]; then
+  runtime_note="left untouched (drop-in was not present)"
+  info "drop-in was not present — leaving the runtime reservation untouched"
+elif [ "${ONIONARMOR_SKIP_RELOAD:-}" = "yes" ]; then
   runtime_note="left untouched (ONIONARMOR_SKIP_RELOAD=yes; a reboot clears it)"
   info "ONIONARMOR_SKIP_RELOAD=yes — leaving the runtime reservation untouched"
 else
