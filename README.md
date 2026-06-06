@@ -18,6 +18,40 @@ Phase 1 — sysctl tunings only (25 keys, three role profiles). Kernel-lockdown 
 
 ## Install
 
+### One-liner (recommended)
+
+```sh
+curl -sSL https://raw.githubusercontent.com/1aeo/onionarmor/main/install.sh | sudo bash
+```
+
+> **Supply-chain note.** This pipes branch-tip (`main`) code straight into
+> `sudo bash`, which is convenient but non-reproducible. To pin and review a
+> fixed revision before running it as root:
+>
+> ```sh
+> curl -sSLO https://raw.githubusercontent.com/1aeo/onionarmor/<tag-or-sha>/install.sh
+> less install.sh                                  # review before running
+> sudo ONIONARMOR_REPO_REF=<tag-or-sha> bash install.sh
+> ```
+
+The installer is conservative and idempotent (safe to re-run). It:
+
+- refuses to run as non-root, on a non-Debian/Ubuntu distro, on too-old a bash, or on a kernel too old for the role sysctl keys (≥ 5.2);
+- `apt-get install`s any missing prerequisites;
+- clones (or updates) the repo into `/opt/onionarmor` and symlinks `onionarmor` onto `PATH` at `/usr/local/sbin/onionarmor`;
+- **never** applies a role posture on its own and **never** stages GRUB kernel lockdown — both stay deliberate, opt-in operator steps (see [Safety rails](#safety-rails)). It only prints the next steps.
+
+To also apply a role in the same run (declares the host role + runs `apply --first-run`), set `ONIONARMOR_INSTALL_ROLE`:
+
+```sh
+curl -sSL https://raw.githubusercontent.com/1aeo/onionarmor/main/install.sh \
+  | sudo ONIONARMOR_INSTALL_ROLE=tor-relay bash
+```
+
+Common knobs: `INSTALL_PREFIX` (default `/opt/onionarmor`), `SYMLINK_PATH` (default `/usr/local/sbin/onionarmor`), `ONIONARMOR_REPO_REF` (default `main`; accepts a branch, tag, or commit SHA), `ONIONARMOR_INSTALL_FORCE` (default `0`; set to `1` to discard uncommitted local changes in `$INSTALL_PREFIX` when updating an existing checkout). See the header of [`install.sh`](install.sh) for the full list.
+
+### Manual
+
 `onionarmor` is a self-contained Bash CLI. Clone and put `bin/` on `PATH`:
 
 ```sh
@@ -98,9 +132,9 @@ Each sysctl in a role config carries:
 2. **Host role.conf cross-check.** `apply` and `rollback` refuse unless `/etc/onionarmor/role.conf` contains `role=<r>` matching the `--role` flag. This prevents applying a `tor-relay` posture to a workstation by mistake.
 3. **Backup before every write.** The prior `/etc/sysctl.d/99-onionarmor-<r>.conf` is copied to `…conf.bak.<UTC-ts>` before the new one is written. Any historical backup can be restored manually; `rollback` restores the most recent.
 4. **First-run confirmation.** `apply --first-run` requires interactive `yes` before writing. Subsequent applies are direct.
-5. **Idempotent.** Re-running `apply` with no role-config change produces the same managed file and zero `apply.change` audit entries.
+5. **Convergent.** Re-running `apply` with no role-config change preserves the same sysctl posture and writes zero `apply.change` audit entries. (The managed file is rewritten with a fresh `Written:` header timestamp, so the bytes are not guaranteed identical — the *posture* is.)
 6. **Reboot-required items gated.** Kernel lockdown is never applied by `apply`; only `apply-lockdown` stages it. `apply-lockdown` itself never auto-reboots.
-7. **Tamper-evident audit log.** Every apply, backup, and rollback is appended to `/var/log/onionarmor/audit.log` with timestamp, operator, and details.
+7. **Append-only audit log.** Every apply, backup, and rollback is appended to `/var/log/onionarmor/audit.log` with timestamp, operator, and details. It is a plain operator trail, not cryptographically tamper-evident (no hash chaining or signing) — see [SECURITY.md](SECURITY.md).
 
 ## Reference data
 
@@ -119,11 +153,14 @@ bats tests/
 
 The bats suite spins up a sandbox tree, swaps in a `fake-sysctl` fixture, and runs every CLI surface (`list`, `diff`, `apply --dry-run`, `apply`, `apply` twice (idempotency), `rollback`, `audit`, `apply-lockdown`) plus a full round-trip (`apply` → diff clean → mutate live state → `apply` again → still clean → `rollback` → original).
 
+`tests/install.bats` is a separate, self-contained regression suite for the curl-friendly [`install.sh`](install.sh): it stubs `apt-get`/`git`/`dpkg-query` so it stays fully offline, then exercises the OS / root / bash / kernel gates, the apt-skip and apt-failure paths, idempotency + partial prior-install state, the symlink + `/opt/onionarmor` layout, and the safety rails (never writes `role.conf` by default, never stages GRUB lockdown).
+
 CI runs the suite on `ubuntu-latest` and `ubuntu-22.04` via GitHub Actions; see [`.github/workflows/tests.yml`](.github/workflows/tests.yml).
 
 ## Repo layout
 
 ```
+install.sh                     # curl|sudo bash installer (clone + symlink, idempotent)
 bin/onionarmor                 # CLI entrypoint
 lib/common.sh                  # paths, logging, audit log, confirmation prompt
 lib/role.sh                    # role config parsing + host role.conf validation
@@ -131,7 +168,8 @@ lib/sysctl_ops.sh              # current/target read, managed-file write, backup
 roles/tor-relay.conf           # 25-key tor-relay posture
 roles/eval-host.conf           # 25-key eval-host posture (kexec exception)
 roles/receiver.conf            # 25-key receiver posture
-tests/*.bats                   # bats test suite
+tests/*.bats                   # bats test suite (CLI surfaces)
+tests/install.bats             # bats regression suite for install.sh
 tests/test_helper.bash         # sandbox setup
 tests/fixtures/fake-sysctl     # stub sysctl driver for tests
 tests/fixtures/debian13-relay-baseline.state  # synthetic Debian-13 starting posture
