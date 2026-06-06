@@ -17,6 +17,20 @@ setup() {
   [[ "$output" == *"DoT resolver"* ]]
 }
 
+@test "list-modules: discovers kernel-reserved-ports with its description" {
+  run "$BIN" list-modules
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"kernel-reserved-ports"* ]]
+  [[ "$output" == *"ephemeral source-port pool"* ]]
+}
+
+@test "apply --module kernel-reserved-ports --dry-run: routes to the module" {
+  run "$BIN" apply --module kernel-reserved-ports --reserved-range 9050-9090 --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dry-run: kernel-reserved-ports"* ]]
+  [[ "$output" == *"net.ipv4.ip_local_reserved_ports = 9050-9090"* ]]
+}
+
 @test "help: documents the module subcommands" {
   run "$BIN" help
   [ "$status" -eq 0 ]

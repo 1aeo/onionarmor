@@ -16,7 +16,7 @@ The sharp scope boundary is intentional: onionwarden tells you what's drifting f
 
 Phase 1 — sysctl tunings (25 keys, three role profiles) **plus a modular hardening system**. Kernel-lockdown via GRUB cmdline is documented and stageable but never applied by `apply` (separate `apply-lockdown` subcommand).
 
-The first module is [`dns-posture`](modules/dns-posture/README.md) — the 1aeo fleet's DoT + DNSSEC + `unbound` posture (systemd-resolved masked). The module convention generalizes to the Phase 2 roadmap (apparmor, systemd-sandbox, nftables-egress).
+The first modules are [`dns-posture`](modules/dns-posture/README.md) — the 1aeo fleet's DoT + DNSSEC + `unbound` posture (systemd-resolved masked) — and [`kernel-reserved-ports`](modules/kernel-reserved-ports/README.md) — reserving a relay's loopback service ports from the kernel ephemeral source-port pool so an outbound connection can't steal a port tor needs to bind. The module convention generalizes to the Phase 2 roadmap (apparmor, systemd-sandbox, nftables-egress).
 
 ## Install
 
@@ -155,6 +155,7 @@ A module lives under `modules/<name>/` and provides `apply.sh`, `audit.sh`, `rev
 | Module | What it does | Docs |
 |---|---|---|
 | [`dns-posture`](modules/dns-posture/README.md) | Local validating DoT resolver (`unbound` + DNSSEC), `systemd-resolved` masked, `resolv.conf` pinned. Every default (upstreams, DNSSEC, listener, threads, masking) is overridable. | [README](modules/dns-posture/README.md) |
+| [`kernel-reserved-ports`](modules/kernel-reserved-ports/README.md) | Reserve the relay's loopback service ports (`MetricsPort`/`ControlPort`/…) from the kernel ephemeral source-port pool via `net.ipv4.ip_local_reserved_ports`, so an outbound connection can't steal a port tor needs to bind. Auto-detects ports from torrc (`--auto`). | [README](modules/kernel-reserved-ports/README.md) |
 
 Module `apply`/`audit`/`revert` all write to the same tamper-evident audit log as the role-based commands. `apply --module <name>` and the role-based `apply --role <name>` are distinct paths — `--module` routes to the module, everything else is unchanged.
 
@@ -215,6 +216,11 @@ modules/dns-posture/           # DoT + DNSSEC + unbound module
   lib.sh                       #   shared helpers (env-overridable cmds/paths)
   README.md                    #   flags, examples, threat model
   tests/bats/                  #   offline module suite (stubbed externals)
+modules/kernel-reserved-ports/ # reserve loopback tor ports from ephemeral pool
+  apply.sh audit.sh revert.sh  #   the three action scripts
+  lib.sh                       #   torrc auto-detect + range compaction helpers
+  README.md                    #   flags, examples, threat model
+  tests/bats/                  #   offline module suite (stubbed sysctl)
 tests/*.bats                   # core bats suite (CLI surfaces, incl. modules.bats dispatch)
 tests/install.bats             # bats regression suite for install.sh
 tests/test_helper.bash         # sandbox setup
