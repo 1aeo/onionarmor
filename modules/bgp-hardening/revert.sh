@@ -68,10 +68,15 @@ if [ -e "$marker" ]; then
   audit_log bgp.revert.rpki "removed=$BGP_RPKI_ROUTEMAP"
   info "removed FRR rpki cache + route-map $BGP_RPKI_ROUTEMAP"
   touched=1
-  # Validator stays installed, just stopped + disabled (only if we enabled it).
+fi
+
+# Validator stays installed, just stopped + disabled (only if we enabled it).
+routinator_marker=$(bgp_routinator_marker_path)
+if [ -e "$routinator_marker" ]; then
   "$ONIONARMOR_BGP_SYSTEMCTL" disable --now routinator >/dev/null 2>&1 \
     && info "disabled routinator (left installed)" \
     || info "routinator not disabled (not present or already inactive)"
+  rm -f "$routinator_marker" || true
 fi
 
 # ---------------------------------------------------------------------------
@@ -79,17 +84,18 @@ fi
 # ---------------------------------------------------------------------------
 gtsm_marker=$(bgp_gtsm_marker_path)
 if [ -e "$gtsm_marker" ]; then
-  gtsm_peers=$(cat "$gtsm_marker" 2>/dev/null || true)
-  if [ -n "$gtsm_peers" ]; then
+  gtsm_data=$(cat "$gtsm_marker" 2>/dev/null || true)
+  if [ -n "$gtsm_data" ]; then
     {
-      while IFS= read -r p; do
+      while read -r p hops; do
         [ -n "$p" ] || continue
-        printf 'no neighbor %s ttl-security hops\n' "$p"
+        [ -n "$hops" ] || hops=1
+        printf 'no neighbor %s ttl-security hops %s\n' "$p" "$hops"
       done <<EOF
-$gtsm_peers
+$gtsm_data
 EOF
     } | bgp_vtysh_apply || warn "could not remove FRR GTSM config via vtysh"
-    audit_log bgp.revert.gtsm "removed_peers=$(printf '%s' "$gtsm_peers" | tr '\n' ' ')"
+    audit_log bgp.revert.gtsm "removed_peers=$(printf '%s' "$gtsm_data" | awk '{print $1}' | tr '\n' ' ')"
     info "removed GTSM ttl-security configuration"
     touched=1
   fi

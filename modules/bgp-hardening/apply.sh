@@ -124,15 +124,25 @@ if [ "$BGP_DO_FIREWALL" -eq 1 ]; then
       any_changed=1
     fi
   else
-    # ufw path: best-effort, additive.
+    # ufw path: check existing rules for idempotency.
+    ufw_changed=0
+    ufw_status=$("$ONIONARMOR_BGP_UFW" status numbered 2>/dev/null || true)
     while IFS= read -r line; do
       [ -n "$line" ] || continue
-      # shellcheck disable=SC2086  # ufw args are a controlled, space-split command
-      "$ONIONARMOR_BGP_UFW" $line >/dev/null 2>&1 || warn "ufw command failed: $line"
+      # Check if this rule already exists in the ufw status output
+      if ! printf '%s\n' "$ufw_status" | grep -qF "${line#* }"; then
+        # shellcheck disable=SC2086  # ufw args are a controlled, space-split command
+        "$ONIONARMOR_BGP_UFW" $line >/dev/null 2>&1 || warn "ufw command failed: $line"
+        ufw_changed=1
+      fi
     done < <(printf '%s\n' "$peers" | bgp_render_ufw)
-    audit_log bgp.apply.firewall "ufw peers=$peer_list_oneline"
-    info "firewall: ufw restricts tcp/179 to { $peer_list_oneline }"
-    any_changed=1
+    if [ "$ufw_changed" -eq 1 ]; then
+      audit_log bgp.apply.firewall "ufw peers=$peer_list_oneline"
+      info "firewall: ufw restricts tcp/179 to { $peer_list_oneline }"
+      any_changed=1
+    else
+      info "firewall already current: ufw tcp/179 rules"
+    fi
   fi
 fi
 
@@ -155,6 +165,7 @@ if [ "$BGP_RPKI" -eq 1 ]; then
     fi
     "$ONIONARMOR_BGP_SYSTEMCTL" enable --now routinator >/dev/null 2>&1 \
       || warn "could not enable+start routinator via systemctl"
+    : > "$(bgp_routinator_marker_path)"
     any_changed=1
   fi
   # Configure FRR's rpki cache + route-map once (idempotent: the marker means
@@ -177,7 +188,12 @@ fi
 # ---------------------------------------------------------------------------
 if [ "$BGP_GTSM" -eq 1 ]; then
   if printf '%s\n' "$peers" | bgp_render_gtsm_config | bgp_vtysh_apply; then
-    printf '%s\n' "$peers" > "$(bgp_gtsm_marker_path)"
+    while IFS= read -r p; do
+      [ -n "$p" ] || continue
+      printf '%s %s\n' "$p" "$BGP_GTSM_HOPS"
+    done <<EOF > "$(bgp_gtsm_marker_path)"
+$peers
+EOF
     audit_log bgp.apply.gtsm "hops=$BGP_GTSM_HOPS peers=$peer_list_oneline"
     info "GTSM: set ttl-security hops $BGP_GTSM_HOPS per neighbor (requires peer cooperation to take effect)"
     frr_changed=1; any_changed=1

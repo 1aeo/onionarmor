@@ -188,6 +188,7 @@ bgp_daemons_path()        { printf '%s\n' "$ONIONARMOR_BGP_DAEMONS"; }
 bgp_daemons_backup_path() { printf '%s/daemons.bak\n' "$ONIONARMOR_BGP_STATE_DIR"; }
 bgp_nft_backup_path()     { printf '%s/nftables-%s.bak\n' "$ONIONARMOR_BGP_STATE_DIR" "$BGP_NFT_TABLE"; }
 bgp_rpki_marker_path()    { printf '%s/rpki.applied\n' "$ONIONARMOR_BGP_STATE_DIR"; }
+bgp_routinator_marker_path() { printf '%s/routinator.enabled\n' "$ONIONARMOR_BGP_STATE_DIR"; }
 bgp_gtsm_marker_path()    { printf '%s/gtsm.applied\n' "$ONIONARMOR_BGP_STATE_DIR"; }
 
 # --- FRR config auto-detection --------------------------------------------

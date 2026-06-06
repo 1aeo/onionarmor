@@ -50,17 +50,22 @@ if [ "$BGP_FIREWALL" = "nftables" ]; then
     bgp_check red "firewall tcp/179" "managed table present but missing the default tcp/179 drop"
   else
     # Every known peer must appear in the accept set; otherwise it's drift.
-    missing=""
-    while IFS= read -r p; do
-      [ -n "$p" ] || continue
-      printf '%s\n' "$cur" | grep -qF "$p" || missing="$missing $p"
-    done <<EOF
+    # If no peers are detected, that's a configuration problem.
+    if [ -z "$peers" ]; then
+      bgp_check yellow "firewall tcp/179" "drop in place, but no peers detected — may block all BGP"
+    else
+      missing=""
+      while IFS= read -r p; do
+        [ -n "$p" ] || continue
+        printf '%s\n' "$cur" | grep -qF "$p" || missing="$missing $p"
+      done <<EOF
 $peers
 EOF
-    if [ -n "$missing" ]; then
-      bgp_check yellow "firewall tcp/179" "drop in place, but known peer(s) not in accept set:$missing"
-    else
-      bgp_check green "firewall tcp/179" "tcp/179 restricted to known peer(s); default drop present"
+      if [ -n "$missing" ]; then
+        bgp_check yellow "firewall tcp/179" "drop in place, but known peer(s) not in accept set:$missing"
+      else
+        bgp_check green "firewall tcp/179" "tcp/179 restricted to known peer(s); default drop present"
+      fi
     fi
   fi
 else
