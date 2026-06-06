@@ -169,6 +169,22 @@ dropin_value() {
   [ ! -e "$filters" ]
 }
 
+@test "apply (manual, no --auto): stale filter cleanup is best-effort on unlink failure" {
+  # Regression for the set -e footgun: if unlinking the stale apply-filters.conf
+  # fails, apply must still succeed (the reservation is already live).
+  if [ "$(id -u)" -eq 0 ]; then skip "root bypasses dir perms — rm never fails"; fi
+  seed_metrics_fleet 48010 48050
+  bash "$APPLY" --auto >/dev/null
+  filters="$ONIONARMOR_KRP_STATE_DIR/apply-filters.conf"
+  [ -f "$filters" ]
+  # Read-only state dir => rm -f cannot unlink the stale file.
+  chmod 500 "$ONIONARMOR_KRP_STATE_DIR"
+  run bash "$APPLY" --reserved-range 9050-9090
+  chmod 700 "$ONIONARMOR_KRP_STATE_DIR"   # restore before asserts so teardown can clean up
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"could not remove stale filter state"* ]]
+}
+
 @test "apply --auto: a failed filter-persist warns but does not fail the apply" {
   # Regression: krp_save_apply_filters is best-effort and runs AFTER the reload,
   # so it can never block the reservation going live. Make the state dir
