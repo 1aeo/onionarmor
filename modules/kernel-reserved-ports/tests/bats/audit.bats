@@ -64,3 +64,15 @@ load test_helper
   [ "$status" -eq 0 ]
   [[ "$output" == *"pass --auto"* ]]
 }
+
+@test "audit --auto with no drop-in: red (missing) + yellow coverage, no false drift" {
+  # Regression: a missing drop-in is one root cause — check (a) reds it. The
+  # coverage check must not pile on a misleading 'drift' red for the same thing.
+  seed_metrics_fleet 48010 48050
+  run bash "$AUDIT" --auto
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no reservation in place yet"* ]]
+  # No coverage-check "drift:" finding (the red epilogue's "drifted" is fine).
+  ! [[ "$output" == *"drift:"* ]]
+  ! [[ "$output" == *"NOT reserved"* ]]
+}

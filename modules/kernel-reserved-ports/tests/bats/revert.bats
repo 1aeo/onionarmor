@@ -49,6 +49,18 @@ load test_helper
   [ ! -e "$ONIONARMOR_KRP_STATE_DIR/backup.conf" ]
 }
 
+@test "revert: leaves the runtime untouched when no drop-in of ours is present" {
+  # Regression: revert must not clobber an ip_local_reserved_ports value some
+  # OTHER tool set when we have no drop-in (nothing of ours to undo).
+  printf '40000-40010\n' > "$ONIONARMOR_KRP_PROC_FILE"
+  : > "$STUB_SYSCTL_LOG"
+  run bash "$REVERT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"left as-is"* ]]
+  [ "$(cat "$ONIONARMOR_KRP_PROC_FILE")" = "40000-40010" ]
+  ! grep -q -- '-w net.ipv4.ip_local_reserved_ports=' "$STUB_SYSCTL_LOG"
+}
+
 @test "revert: summary reports the runtime as cleared on the normal path" {
   seed_metrics_fleet 48010 48050
   bash "$APPLY" --auto >/dev/null
