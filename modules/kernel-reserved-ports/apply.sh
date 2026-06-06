@@ -85,8 +85,14 @@ fi
 
 # ---------------------------------------------------------------------------
 # 3. Verify (default on): live sysctl value AND /proc both match the drop-in.
+#
+# Verification, when it runs, is AUTHORITATIVE: if the live kernel value and
+# /proc both match the drop-in, the apply succeeded — even if `sysctl --system`
+# returned nonzero (it can fail over an unrelated drop-in while still loading
+# ours). Only when verification is skipped/disabled does the reload exit code
+# become the success signal, so a silent reload failure still fails the apply.
 # ---------------------------------------------------------------------------
-verify_failed=$reload_failed
+verify_failed=0
 if [ "$KRP_VERIFY" -eq 1 ] && [ "${ONIONARMOR_SKIP_RELOAD:-}" != "yes" ]; then
   live=$(krp_sysctl_runtime)
   if [ "$(krp_canon "$live")" = "$canon" ]; then
@@ -105,6 +111,10 @@ if [ "$KRP_VERIFY" -eq 1 ] && [ "${ONIONARMOR_SKIP_RELOAD:-}" != "yes" ]; then
   else
     warn "verify: cannot read $ONIONARMOR_KRP_PROC_FILE (skipping /proc cross-check)"
   fi
+elif [ "$reload_failed" -eq 1 ]; then
+  # No verification ran (disabled or skipped) — the reload status is all we have.
+  warn "verify skipped; treating the nonzero sysctl --system as a failure"
+  verify_failed=1
 fi
 
 audit_log krp.apply.done "ranges=$ranges verify_failed=$verify_failed"

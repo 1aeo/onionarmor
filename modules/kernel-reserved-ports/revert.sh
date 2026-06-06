@@ -36,12 +36,17 @@ fi
 
 # ---------------------------------------------------------------------------
 # 2. Clear the runtime reservation (empty = kernel default) and reload.
+# $runtime_note records what actually happened so the summary can't claim the
+# key was cleared when it wasn't. ONIONARMOR_SKIP_RELOAD leaves the live kernel
+# untouched (symmetric with apply, which skips the load under the same knob).
 # ---------------------------------------------------------------------------
 if [ "${ONIONARMOR_SKIP_RELOAD:-}" = "yes" ]; then
-  info "ONIONARMOR_SKIP_RELOAD=yes — skipping runtime reset"
+  runtime_note="left untouched (ONIONARMOR_SKIP_RELOAD=yes; a reboot clears it)"
+  info "ONIONARMOR_SKIP_RELOAD=yes — leaving the runtime reservation untouched"
 else
+  runtime_note="cleared"
   "$ONIONARMOR_SYSCTL_CMD" -w "$KRP_SYSCTL_KEY=" >/dev/null 2>&1 \
-    || warn "could not clear $KRP_SYSCTL_KEY at runtime via $ONIONARMOR_SYSCTL_CMD -w"
+    || { warn "could not clear $KRP_SYSCTL_KEY at runtime via $ONIONARMOR_SYSCTL_CMD -w"; runtime_note="clear FAILED (a reboot clears it)"; }
   "$ONIONARMOR_SYSCTL_CMD" --system >/dev/null 2>&1 \
     || warn "$ONIONARMOR_SYSCTL_CMD --system returned nonzero during revert"
 fi
@@ -56,13 +61,14 @@ fi
 live=$(krp_sysctl_runtime)
 if [ -n "$live" ] && [ "${ONIONARMOR_SKIP_RELOAD:-}" != "yes" ]; then
   warn "revert removed the drop-in but $KRP_SYSCTL_KEY is still '$live' at runtime (a reboot will clear it)"
+  runtime_note="still '$live' (a reboot clears it)"
 fi
 
-audit_log krp.revert.done "ok=1 backup=$backup"
+audit_log krp.revert.done "ok=1 backup=$backup runtime=$runtime_note"
 cat <<EOF
 
 [kernel-reserved-ports] reverted.
   drop-in : removed ($dropin)
   backup  : $backup
-  runtime : $KRP_SYSCTL_KEY cleared (was reserved; reboot guarantees default)
+  runtime : $KRP_SYSCTL_KEY — $runtime_note
 EOF
