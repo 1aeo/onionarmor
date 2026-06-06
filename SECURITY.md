@@ -150,6 +150,10 @@ Each hardening [module](README.md#modules) documents **what it does and does not
   - **Defends** relay **availability** on dense hosts: it removes a class of intermittent, density-dependent listener bind-failures where the kernel hands a tor instance's loopback service port (e.g. `MetricsPort 48082`) to another instance as an outbound *source* port. A tor instance that can't bind is a relay that drops out — and reliable honest capacity is anonymity-relevant, so uptime belongs in the posture.
   - **Does _not_** firewall, authenticate, or encrypt those ports (protect `MetricsPort`/`ControlPort` at the application layer as usual); does _not_ govern who may connect to a listener — it only constrains the kernel's ephemeral *source*-port selection.
 
+- **`bgp-hardening`** (FRR `bgpd` listener-bind + `tcp/179` firewall + RPKI origin validation, optional GTSM): see the [threat model](modules/bgp-hardening/README.md#threat-model). Scoped to hosts that run BGP, and deliberately respects the operator's full-feed-from-a-trusted-peer constraints:
+  - **Defends against** off-host `tcp/179` connection attempts and scanning (specific listener bind + firewall restricted to the known peer), and route-origin hijacks / mis-originations on the inbound feed (RPKI drops `INVALID`, keeps `VALID` + `UNKNOWN`). GTSM (opt-in) raises the bar for off-path session spoofing **only if the peer cooperates**.
+  - **Does _not_** enforce TCP-MD5/TCP-AO session authentication (the peer doesn't offer it — the `:179` firewall is the equivalent on-path mitigation), does _not_ set `maximum-prefix` (an unbounded feed is wanted), and does _not_ replace the full-table accept policy (`ALLOW_ALL_IN` is kept); it cannot defend against a malicious-but-valid-ROA origin or manipulation by the trusted peer itself.
+
 ## Reporting a vulnerability
 
 Report security issues privately through either channel:
