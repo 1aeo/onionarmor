@@ -183,6 +183,10 @@ dropin_value() {
   chmod 700 "$ONIONARMOR_KRP_STATE_DIR"   # restore before asserts so teardown can clean up
   [ "$status" -eq 0 ]
   [[ "$output" == *"could not remove stale filter state"* ]]
+  # The reservation was still written despite the cleanup failure...
+  [ "$(dropin_value)" = "9050-9090" ]
+  # ...and the stale file is still there, confirming rm actually failed.
+  [ -f "$filters" ]
 }
 
 @test "apply --auto: a failed filter-persist warns but does not fail the apply" {
