@@ -138,7 +138,11 @@ krp_validate_flags() {
         *)   die "kernel-reserved-ports: malformed --reserved-range '$r' — expected <start>-<end>" ;;
       esac
       lo=${r%-*}; hi=${r#*-}
-      case "$lo$hi" in (*[!0-9]*|"") die "kernel-reserved-ports: non-numeric --reserved-range '$r'" ;; esac
+      # Validate each bound SEPARATELY: an empty lo or hi (e.g. "-5000" or
+      # "5000-") would slip past a concatenated `$lo$hi` check and then trip
+      # `[ -ge ]` with "integer expression expected" instead of our die message.
+      case "$lo" in (""|*[!0-9]*) die "kernel-reserved-ports: non-numeric --reserved-range '$r'" ;; esac
+      case "$hi" in (""|*[!0-9]*) die "kernel-reserved-ports: non-numeric --reserved-range '$r'" ;; esac
       [ "$lo" -ge 1 ] && [ "$hi" -le 65535 ] \
         || die "kernel-reserved-ports: range '$r' out of bounds (1-65535)"
       [ "$lo" -le "$hi" ] \
@@ -382,11 +386,18 @@ krp_sysctl_runtime() {
 # krp_save_apply_filters: persist the current filter parameters (listen-ip,
 # min-port, auto-buffer) to the state file so audit --auto can reproduce the
 # same port-detection query that apply used.
+#
+# BEST-EFFORT BY DESIGN: this is an audit convenience, not part of the
+# reservation. It must NEVER `die` — a failure here would otherwise abort apply
+# before the critical `sysctl --system`, leaving the drop-in written but not
+# loaded. Every failure path warns and returns 0 so the bare call under `set -e`
+# in apply.sh can't stop the reload. The temp-file + mv keeps the write atomic.
 krp_save_apply_filters() {
-  local filters_file; filters_file=$(krp_filters_path)
-  mkdir -p "$ONIONARMOR_KRP_STATE_DIR" || die "cannot create $ONIONARMOR_KRP_STATE_DIR"
-  local tmp="$filters_file.tmp.$$"
-  cat > "$tmp" <<EOF || { rm -f "$tmp"; die "cannot write $tmp"; }
+  local filters_file tmp; filters_file=$(krp_filters_path)
+  mkdir -p "$ONIONARMOR_KRP_STATE_DIR" \
+    || { warn "could not create $ONIONARMOR_KRP_STATE_DIR — skipping apply-filter persistence (pass the same --listen-ip/--min-port/--auto-buffer to audit --auto)"; return 0; }
+  tmp="$filters_file.tmp.$$"
+  if ! cat > "$tmp" <<EOF
 # Managed by onionarmor (module: kernel-reserved-ports) — do not edit by hand.
 # The filter parameters from the most recent 'apply --auto' invocation,
 # persisted so 'audit --auto' can check coverage using the same detection scope.
@@ -394,7 +405,14 @@ KRP_LISTEN_IP=$KRP_LISTEN_IP
 KRP_MIN_PORT=$KRP_MIN_PORT
 KRP_AUTO_BUFFER=$KRP_AUTO_BUFFER
 EOF
-  mv "$tmp" "$filters_file" || { rm -f "$tmp"; die "cannot move $tmp -> $filters_file"; }
+  then
+    rm -f "$tmp"
+    warn "could not write apply-filter state — skipping persistence (pass the same filters to audit --auto)"
+    return 0
+  fi
+  mv "$tmp" "$filters_file" \
+    || { rm -f "$tmp"; warn "could not persist apply-filter state $filters_file"; }
+  return 0
 }
 
 # krp_load_apply_filters: if the state file exists and the current invocation

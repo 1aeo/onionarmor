@@ -70,17 +70,6 @@ else
   info "wrote drop-in: $dropin"
 fi
 
-# Persist the apply-time filter parameters so audit --auto can reproduce the
-# same port-detection scope — only AFTER the drop-in is safely written, so a
-# failed drop-in write never leaves the filter state out of sync with it. When
-# NOT using --auto, remove any stale filters from a previous --auto run.
-if [ "$KRP_AUTO" -eq 1 ]; then
-  krp_save_apply_filters
-else
-  filters_file=$(krp_filters_path)
-  [ -f "$filters_file" ] && rm -f "$filters_file"
-fi
-
 # ---------------------------------------------------------------------------
 # 2. Load it into the running kernel.
 # ---------------------------------------------------------------------------
@@ -126,6 +115,19 @@ elif [ "$reload_failed" -eq 1 ]; then
   # No verification ran (disabled or skipped) — the reload status is all we have.
   warn "verify skipped; treating the nonzero sysctl --system as a failure"
   verify_failed=1
+fi
+
+# ---------------------------------------------------------------------------
+# 4. Persist the apply-time filter parameters so audit --auto can reproduce the
+# same port-detection scope. This runs LAST and is best-effort (krp_save never
+# dies): it's an audit convenience, so it must never block the reservation
+# load/verify above. When NOT using --auto, drop any stale filters instead.
+# ---------------------------------------------------------------------------
+if [ "$KRP_AUTO" -eq 1 ]; then
+  krp_save_apply_filters
+else
+  filters_file=$(krp_filters_path)
+  [ -f "$filters_file" ] && rm -f "$filters_file"
 fi
 
 audit_log krp.apply.done "ranges=$ranges verify_failed=$verify_failed"
