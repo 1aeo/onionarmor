@@ -22,12 +22,14 @@ audit_log bgp.revert.start "daemons=$daemons firewall=$BGP_FIREWALL"
 # ---------------------------------------------------------------------------
 # 1. Restore the original /etc/frr/daemons from the apply-time backup.
 # ---------------------------------------------------------------------------
+daemons_restored=0
 if [ -f "$backup" ]; then
   cp -p "$backup" "$daemons" \
     || audit_fail_die bgp.revert.fail "stage=daemons" "failed to restore $daemons from $backup"
   audit_log bgp.revert.daemons "restored=$daemons from=$backup"
   info "restored daemons from $backup"
   touched=1
+  daemons_restored=1
 else
   warn "no daemons backup at $backup — leaving $daemons as-is"
 fi
@@ -70,6 +72,20 @@ if [ -e "$marker" ]; then
   touched=1
 fi
 
+# Remove the no-rib override if we applied it.
+norib_marker=$(bgp_norib_marker_path)
+if [ -e "$norib_marker" ]; then
+  {
+    printf 'router bgp\n'
+    printf ' bgp no-rib\n'
+    printf ' exit\n'
+  } | bgp_vtysh_apply || warn "could not remove FRR no-rib override via vtysh"
+  rm -f "$norib_marker" || true
+  audit_log bgp.revert.norib "removed=no_bgp_no-rib"
+  info "removed 'no bgp no-rib' override"
+  touched=1
+fi
+
 # Validator stays installed, just stopped + disabled (only if we enabled it).
 routinator_marker=$(bgp_routinator_marker_path)
 if [ -e "$routinator_marker" ]; then
@@ -103,13 +119,19 @@ EOF
 fi
 
 # ---------------------------------------------------------------------------
-# 4. Reload FRR gracefully so the restored config takes effect.
+# 5. Reload or restart FRR (restart if daemons restored, reload otherwise).
 # ---------------------------------------------------------------------------
 if [ "${ONIONARMOR_SKIP_RELOAD:-}" = "yes" ]; then
   info "ONIONARMOR_SKIP_RELOAD=yes — skipping FRR reload"
 else
-  "$ONIONARMOR_BGP_SYSTEMCTL" reload frr >/dev/null 2>&1 \
-    || warn "could not reload FRR via systemctl — restored config is on disk; reload manually"
+  if [ "$daemons_restored" -eq 1 ]; then
+    # Daemons file restored means bgpd_options changed, which requires restart.
+    "$ONIONARMOR_BGP_SYSTEMCTL" restart frr >/dev/null 2>&1 \
+      || warn "could not restart FRR via systemctl — restored config is on disk; restart manually"
+  else
+    "$ONIONARMOR_BGP_SYSTEMCTL" reload frr >/dev/null 2>&1 \
+      || warn "could not reload FRR via systemctl — restored config is on disk; reload manually"
+  fi
 fi
 
 audit_log bgp.revert.done "touched=$touched"

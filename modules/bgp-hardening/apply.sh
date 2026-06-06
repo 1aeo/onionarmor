@@ -75,8 +75,11 @@ mkdir -p "$ONIONARMOR_BGP_STATE_DIR" || die "cannot create $ONIONARMOR_BGP_STATE
 # frr_changed gates the graceful FRR reload (daemons/rpki/gtsm touch FRR);
 # any_changed only drives the closing "no changes" message. Firewall edits are
 # independent of FRR and never trigger a reload on their own.
+# bgpd_options_changed tracks whether bgpd_options was edited, which requires a
+# restart (not just reload) for bgpd to pick up the -l bind change.
 frr_changed=0
 any_changed=0
+bgpd_options_changed=0
 
 # ---------------------------------------------------------------------------
 # 1. Listener bind: set -l <ip> in /etc/frr/daemons bgpd_options.
@@ -99,7 +102,25 @@ if [ "$BGP_BIND_FIX" -eq 1 ]; then
     mv "$tmp" "$dropin_daemons" || { rm -f "$tmp"; die "cannot move $tmp -> $dropin_daemons"; }
     audit_log bgp.apply.bind "daemons=$dropin_daemons bind=$bind_ip"
     info "set bgpd listener bind -> $bind_ip"
+    frr_changed=1; any_changed=1; bgpd_options_changed=1
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 1a. Override -l implicit --no_kernel: when bgpd starts with -l, it implies
+# --no_kernel, preventing learned routes from being installed into the kernel.
+# Apply 'no bgp no-rib' to override that and preserve the full-feed use case.
+# ---------------------------------------------------------------------------
+if [ "$BGP_BIND_FIX" -eq 1 ] && [ "$bgpd_options_changed" -eq 1 ]; then
+  if [ -e "$(bgp_norib_marker_path)" ]; then
+    info "listener -l no-rib override already configured"
+  elif bgp_render_norib_config | bgp_vtysh_apply; then
+    : > "$(bgp_norib_marker_path)"
+    audit_log bgp.apply.norib "override=-l_implicit_no_kernel"
+    info "configured 'no bgp no-rib' to override -l implicit --no_kernel (preserves full feed)"
     frr_changed=1; any_changed=1
+  else
+    warn "listener -l no-rib override not applied (vtysh unavailable?) — BGP routes may not install into kernel"
   fi
 fi
 
@@ -203,17 +224,23 @@ EOF
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Reload FRR gracefully (preserves the forwarding plane).
+# 5. Reload or restart FRR (restart if bgpd_options changed, reload otherwise).
 # ---------------------------------------------------------------------------
 if [ "${ONIONARMOR_SKIP_RELOAD:-}" = "yes" ]; then
   info "ONIONARMOR_SKIP_RELOAD=yes — skipping FRR reload"
 elif [ "$frr_changed" -eq 1 ]; then
-  # Graceful reload preserves the forwarding plane. NB: a bgpd_options (-l)
-  # change is only picked up when bgpd restarts — FRR's graceful restart keeps
-  # the FIB across that; see the module README.
-  "$ONIONARMOR_BGP_SYSTEMCTL" reload frr >/dev/null 2>&1 \
-    && info "reloaded FRR (graceful; forwarding plane preserved)" \
-    || warn "could not reload FRR via systemctl — apply changes are on disk; reload manually"
+  if [ "$bgpd_options_changed" -eq 1 ]; then
+    # bgpd_options (-l) changes are only picked up on bgpd restart, not reload.
+    # A full restart is required for the listener bind to take effect.
+    "$ONIONARMOR_BGP_SYSTEMCTL" restart frr >/dev/null 2>&1 \
+      && info "restarted FRR (bgpd_options changed; -l bind requires restart)" \
+      || warn "could not restart FRR via systemctl — apply changes are on disk; restart manually"
+  else
+    # Graceful reload preserves the forwarding plane for config-only changes.
+    "$ONIONARMOR_BGP_SYSTEMCTL" reload frr >/dev/null 2>&1 \
+      && info "reloaded FRR (graceful; forwarding plane preserved)" \
+      || warn "could not reload FRR via systemctl — apply changes are on disk; reload manually"
+  fi
 else
   info "no FRR-affecting changes — reload not needed"
 fi

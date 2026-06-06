@@ -190,6 +190,7 @@ bgp_nft_backup_path()     { printf '%s/nftables-%s.bak\n' "$ONIONARMOR_BGP_STATE
 bgp_rpki_marker_path()    { printf '%s/rpki.applied\n' "$ONIONARMOR_BGP_STATE_DIR"; }
 bgp_routinator_marker_path() { printf '%s/routinator.enabled\n' "$ONIONARMOR_BGP_STATE_DIR"; }
 bgp_gtsm_marker_path()    { printf '%s/gtsm.applied\n' "$ONIONARMOR_BGP_STATE_DIR"; }
+bgp_norib_marker_path()   { printf '%s/norib.applied\n' "$ONIONARMOR_BGP_STATE_DIR"; }
 
 # --- FRR config auto-detection --------------------------------------------
 # bgp_detect_router_id: first `bgp router-id <ip>` in the FRR config, or empty.
@@ -329,6 +330,17 @@ bgp_render_rpki_config() {
   printf 'route-map %s deny 10\n' "$BGP_RPKI_ROUTEMAP"
   printf ' match rpki invalid\n'
   printf 'route-map %s permit 20\n' "$BGP_RPKI_ROUTEMAP"
+  printf '!\n'
+}
+
+# bgp_render_norib_config: override the implicit --no_kernel behavior of -l.
+# When bgpd starts with -l (listenon), it implicitly enables --no_kernel,
+# preventing learned routes from being installed into the kernel. This function
+# generates the config to override that default.
+bgp_render_norib_config() {
+  printf 'router bgp\n'
+  printf ' no bgp no-rib\n'
+  printf ' exit\n'
   printf '!\n'
 }
 
