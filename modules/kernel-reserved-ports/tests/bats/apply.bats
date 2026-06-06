@@ -157,6 +157,18 @@ dropin_value() {
   ! [[ "$output" == *"integer expression"* ]]
 }
 
+@test "apply (manual, no --auto): drops a stale apply-filters.conf" {
+  # apply --auto persists filters; a later manual apply must clear them so a
+  # subsequent audit --auto doesn't reload a now-irrelevant detection scope.
+  seed_metrics_fleet 48010 48050
+  bash "$APPLY" --auto >/dev/null
+  filters="$ONIONARMOR_KRP_STATE_DIR/apply-filters.conf"
+  [ -f "$filters" ]
+  run bash "$APPLY" --reserved-range 9050-9090
+  [ "$status" -eq 0 ]
+  [ ! -e "$filters" ]
+}
+
 @test "apply --auto: a failed filter-persist warns but does not fail the apply" {
   # Regression: krp_save_apply_filters is best-effort and runs AFTER the reload,
   # so it can never block the reservation going live. Make the state dir
