@@ -14,7 +14,9 @@ The sharp scope boundary is intentional: onionwarden tells you what's drifting f
 
 ## Status
 
-Phase 1 — sysctl tunings only (25 keys, three role profiles). Kernel-lockdown via GRUB cmdline is documented and stageable but never applied by `apply` (separate `apply-lockdown` subcommand).
+Phase 1 — sysctl tunings (25 keys, three role profiles) **plus a modular hardening system**. Kernel-lockdown via GRUB cmdline is documented and stageable but never applied by `apply` (separate `apply-lockdown` subcommand).
+
+The first module is [`dns-posture`](modules/dns-posture/README.md) — the 1aeo fleet's DoT + DNSSEC + `unbound` posture (systemd-resolved masked). The module convention generalizes to the Phase 2 roadmap (apparmor, systemd-sandbox, nftables-egress).
 
 ## Install
 
@@ -58,6 +60,14 @@ Common knobs: `INSTALL_PREFIX` (default `/opt/onionarmor`), `SYMLINK_PATH` (defa
 git clone https://github.com/1aeo/onionarmor.git /opt/onionarmor
 sudo ln -s /opt/onionarmor/bin/onionarmor /usr/local/sbin/onionarmor
 ```
+
+> **Pin and review before you run.** `onionarmor` mutates host state as root, so
+> don't track branch tip blindly. Check out a reviewed tag or commit SHA and
+> inspect the diff before putting `bin/` on `PATH`:
+>
+> ```sh
+> git -C /opt/onionarmor checkout <tag-or-sha>   # pin to a reviewed revision
+> ```
 
 No dependencies beyond a POSIX shell, `awk`, `sysctl`, and (for the optional CI lint) `shellcheck`.
 
@@ -108,6 +118,8 @@ sudo onionarmor apply --role tor-relay
 | `rollback --role <r>` | Restore the most recent backup of the managed file and reload sysctls. |
 | `audit` | Print the full audit log (every apply / rollback ever). |
 | `apply-lockdown` `[--no-reboot]` | Stage `lockdown=integrity` in GRUB cmdline. Prints a REBOOT REQUIRED warning by default; `--no-reboot` suppresses the warning but still requires a reboot to activate. Never auto-reboots. |
+| `list-modules` | List installed hardening modules + descriptions. |
+| `apply --module <m>` / `audit --module <m>` / `revert --module <m>` | Apply / status / undo a [module](#modules). `audit --module` exits non-zero if any check is red. |
 | `help` | Show usage. |
 
 ## Roles
@@ -125,6 +137,26 @@ Each sysctl in a role config carries:
 - `# DOC:` — plain-English explanation of what the setting does.
 - `# REF:` — rationale source (CIS Debian 12, RHEL 9 STIG, Linux kernel docs).
 - `# COMPAT:` — known compatibility gotchas ("breaks perf-record annotate", etc.).
+
+## Modules
+
+Beyond the sysctl roles, onionarmor ships **modules** — self-contained hardening postures applied with `--module`:
+
+```sh
+onionarmor list-modules                          # discover installed modules
+sudo onionarmor apply  --module dns-posture      # apply a posture
+onionarmor      audit  --module dns-posture      # green/yellow/red status (non-zero exit if red)
+sudo onionarmor revert --module dns-posture      # undo it
+sudo onionarmor apply  --module dns-posture --dry-run   # preview, change nothing
+```
+
+A module lives under `modules/<name>/` and provides `apply.sh`, `audit.sh`, `revert.sh`, a `README.md`, and `tests/bats/`. The registry is a **directory scan** — a directory is a module iff it has those three action scripts; `list-modules` reads each module's one-line description from the `# MODULE:` header in `apply.sh`. (No manifest file to drift from the real scripts.) See [`lib/module.sh`](lib/module.sh) for the convention.
+
+| Module | What it does | Docs |
+|---|---|---|
+| [`dns-posture`](modules/dns-posture/README.md) | Local validating DoT resolver (`unbound` + DNSSEC), `systemd-resolved` masked, `resolv.conf` pinned. Every default (upstreams, DNSSEC, listener, threads, masking) is overridable. | [README](modules/dns-posture/README.md) |
+
+Module `apply`/`audit`/`revert` all write to the same tamper-evident audit log as the role-based commands. `apply --module <name>` and the role-based `apply --role <name>` are distinct paths — `--module` routes to the module, everything else is unchanged.
 
 ## Safety rails
 
@@ -151,11 +183,20 @@ We **pin** the values in this repo's role configs rather than reading onionwarde
 bats tests/
 ```
 
-The bats suite spins up a sandbox tree, swaps in a `fake-sysctl` fixture, and runs every CLI surface (`list`, `diff`, `apply --dry-run`, `apply`, `apply` twice (idempotency), `rollback`, `audit`, `apply-lockdown`) plus a full round-trip (`apply` → diff clean → mutate live state → `apply` again → still clean → `rollback` → original).
+The core suite spins up a sandbox tree, swaps in a `fake-sysctl` fixture, and runs every CLI surface (`list`, `diff`, `apply --dry-run`, `apply`, `apply` twice (idempotency), `rollback`, `audit`, `apply-lockdown`, plus `list-modules` + module dispatch) plus a full round-trip.
 
 `tests/install.bats` is a separate, self-contained regression suite for the curl-friendly [`install.sh`](install.sh): it stubs `apt-get`/`git`/`dpkg-query` so it stays fully offline, then exercises the OS / root / bash / kernel gates, the apt-skip and apt-failure paths, idempotency + partial prior-install state, the symlink + `/opt/onionarmor` layout, and the safety rails (never writes `role.conf` by default, never stages GRUB lockdown).
 
-CI runs the suite on `ubuntu-latest` and `ubuntu-22.04` via GitHub Actions; see [`.github/workflows/tests.yml`](.github/workflows/tests.yml).
+Each module also has its own offline suite (external commands stubbed):
+
+```sh
+bats tests/                          # core CLI + module dispatch
+bats modules/*/tests/bats/           # per-module suites (e.g. dns-posture)
+```
+
+The `dns-posture` suite includes a regression for the duplicate-anchor bug: `audit` must return red on two `auto-trust-anchor-file` lines, and `apply` must produce a config `unbound-checkconf` accepts.
+
+CI runs the core, install, and module suites on `ubuntu-latest` and `ubuntu-22.04` via GitHub Actions, plus `shellcheck` over `bin/`, `lib/`, `install.sh`, and `modules/*/*.sh`; see [`.github/workflows/tests.yml`](.github/workflows/tests.yml).
 
 ## Repo layout
 
@@ -165,15 +206,21 @@ bin/onionarmor                 # CLI entrypoint
 lib/common.sh                  # paths, logging, audit log, confirmation prompt
 lib/role.sh                    # role config parsing + host role.conf validation
 lib/sysctl_ops.sh              # current/target read, managed-file write, backups
+lib/module.sh                  # module registry + apply/audit/revert dispatch
 roles/tor-relay.conf           # 25-key tor-relay posture
 roles/eval-host.conf           # 25-key eval-host posture (kexec exception)
 roles/receiver.conf            # 25-key receiver posture
-tests/*.bats                   # bats test suite (CLI surfaces)
+modules/dns-posture/           # DoT + DNSSEC + unbound module
+  apply.sh audit.sh revert.sh  #   the three action scripts
+  lib.sh                       #   shared helpers (env-overridable cmds/paths)
+  README.md                    #   flags, examples, threat model
+  tests/bats/                  #   offline module suite (stubbed externals)
+tests/*.bats                   # core bats suite (CLI surfaces, incl. modules.bats dispatch)
 tests/install.bats             # bats regression suite for install.sh
 tests/test_helper.bash         # sandbox setup
 tests/fixtures/fake-sysctl     # stub sysctl driver for tests
 tests/fixtures/debian13-relay-baseline.state  # synthetic Debian-13 starting posture
-.github/workflows/tests.yml    # CI: bats + shellcheck
+.github/workflows/tests.yml    # CI: bats (core + modules) + shellcheck
 ```
 
 ## Why a separate apply tool?
