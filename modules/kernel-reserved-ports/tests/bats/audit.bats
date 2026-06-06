@@ -117,3 +117,17 @@ load test_helper
   ! [[ "$output" == *"drift"* ]]
   ! [[ "$output" == *"1500"* ]]
 }
+
+@test "audit --auto with an explicit non-zero --auto-buffer does not abort (set -e)" {
+  # Regression: krp_load_apply_filters must return success even when the current
+  # --auto-buffer/--min-port is non-default. A trailing `cond && assign` that
+  # evaluates false would return non-zero and, as a bare call under set -e, kill
+  # audit before any check ran.
+  seed_metrics_fleet 48010 48050
+  bash "$APPLY" --auto >/dev/null
+  run bash "$AUDIT" --auto --auto-buffer 50
+  # The reservation (48010-48050) still covers the detected ports → green, and
+  # crucially the audit RAN to completion rather than aborting at exit 1.
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"tor ports covered"* ]]
+}
