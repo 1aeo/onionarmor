@@ -126,8 +126,13 @@ fi
 if [ "$KRP_AUTO" -eq 1 ]; then
   krp_save_apply_filters
 else
+  # Best-effort, same contract as krp_save_apply_filters: a failed unlink must
+  # not abort apply after the reservation is already live. `[ -f ] && rm` would
+  # leave rm as the final && command (NOT set -e-exempt); use if/then + warn.
   filters_file=$(krp_filters_path)
-  [ -f "$filters_file" ] && rm -f "$filters_file"
+  if [ -e "$filters_file" ] && ! rm -f "$filters_file"; then
+    warn "could not remove stale filter state $filters_file"
+  fi
 fi
 
 audit_log krp.apply.done "ranges=$ranges verify_failed=$verify_failed"
