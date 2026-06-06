@@ -72,6 +72,12 @@ krp_set_defaults() {
   KRP_VERIFY=1
   KRP_CLUSTER_GAP=256    # ports within this gap fold into one compact range
   KRP_MIN_PORT=1024      # ignore well-known ports below this
+  # "Explicitly set on the CLI" markers for the persisted detection filters, so
+  # krp_load_apply_filters can tell `--min-port 1024` (an explicit default) from
+  # "not passed at all" — a value-vs-default check cannot.
+  KRP_LISTEN_IP_SET=0
+  KRP_MIN_PORT_SET=0
+  KRP_AUTO_BUFFER_SET=0
 }
 
 # krp_need_val <flag> <count>: die unless a value-taking flag was given an
@@ -91,14 +97,14 @@ krp_parse_flags() {
       --auto)              KRP_AUTO=1; shift ;;
       --reserved-range)    krp_need_val "$1" "$#"; krp_add_range "$2"; shift 2 ;;
       --reserved-range=*)  krp_add_range "${1#--reserved-range=}"; shift ;;
-      --auto-buffer)       krp_need_val "$1" "$#"; KRP_AUTO_BUFFER=$2; shift 2 ;;
-      --auto-buffer=*)     KRP_AUTO_BUFFER=${1#--auto-buffer=}; shift ;;
-      --listen-ip)         krp_need_val "$1" "$#"; KRP_LISTEN_IP=$2; shift 2 ;;
-      --listen-ip=*)       KRP_LISTEN_IP=${1#--listen-ip=}; shift ;;
+      --auto-buffer)       krp_need_val "$1" "$#"; KRP_AUTO_BUFFER=$2; KRP_AUTO_BUFFER_SET=1; shift 2 ;;
+      --auto-buffer=*)     KRP_AUTO_BUFFER=${1#--auto-buffer=}; KRP_AUTO_BUFFER_SET=1; shift ;;
+      --listen-ip)         krp_need_val "$1" "$#"; KRP_LISTEN_IP=$2; KRP_LISTEN_IP_SET=1; shift 2 ;;
+      --listen-ip=*)       KRP_LISTEN_IP=${1#--listen-ip=}; KRP_LISTEN_IP_SET=1; shift ;;
       --cluster-gap)       krp_need_val "$1" "$#"; KRP_CLUSTER_GAP=$2; shift 2 ;;
       --cluster-gap=*)     KRP_CLUSTER_GAP=${1#--cluster-gap=}; shift ;;
-      --min-port)          krp_need_val "$1" "$#"; KRP_MIN_PORT=$2; shift 2 ;;
-      --min-port=*)        KRP_MIN_PORT=${1#--min-port=}; shift ;;
+      --min-port)          krp_need_val "$1" "$#"; KRP_MIN_PORT=$2; KRP_MIN_PORT_SET=1; shift 2 ;;
+      --min-port=*)        KRP_MIN_PORT=${1#--min-port=}; KRP_MIN_PORT_SET=1; shift ;;
       --dry-run)           KRP_DRY_RUN=1; shift ;;
       --verify)            KRP_VERIFY=1; shift ;;
       --no-verify)         KRP_VERIFY=0; shift ;;
@@ -409,13 +415,15 @@ krp_load_apply_filters() {
     esac
   done < <(grep '^KRP_' "$filters_file")
 
-  # Apply saved values only for parameters still at their default — an explicit
-  # non-default CLI value wins. Use if/fi (not `cond && assign`): a trailing
-  # `&&` that evaluates false would make this function return non-zero and, as a
-  # bare call under `set -e` in audit.sh, abort the audit. `return 0` is belt
-  # and suspenders for the same reason.
-  if [ -z "$KRP_LISTEN_IP" ]; then KRP_LISTEN_IP=$saved_listen_ip; fi
-  if [ "$KRP_MIN_PORT" -eq 1024 ]; then KRP_MIN_PORT=$saved_min_port; fi
-  if [ "$KRP_AUTO_BUFFER" -eq 0 ]; then KRP_AUTO_BUFFER=$saved_auto_buffer; fi
+  # Apply saved values only for filters the user did NOT pass on this command's
+  # CLI (tracked by krp_parse_flags markers). A value-vs-default check would be
+  # wrong: `audit --auto --min-port 1024` explicitly asks for 1024 and must not
+  # be overwritten by a persisted non-default. Use if/fi (not `cond && assign`):
+  # a trailing `&&` that evaluates false would make this function return
+  # non-zero and, as a bare call under `set -e` in audit.sh, abort the audit.
+  # `return 0` is belt and suspenders for the same reason.
+  if [ "$KRP_LISTEN_IP_SET" -eq 0 ]; then KRP_LISTEN_IP=$saved_listen_ip; fi
+  if [ "$KRP_MIN_PORT_SET" -eq 0 ]; then KRP_MIN_PORT=$saved_min_port; fi
+  if [ "$KRP_AUTO_BUFFER_SET" -eq 0 ]; then KRP_AUTO_BUFFER=$saved_auto_buffer; fi
   return 0
 }

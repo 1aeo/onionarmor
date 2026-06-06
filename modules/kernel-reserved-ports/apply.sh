@@ -55,16 +55,6 @@ fi
 
 audit_log krp.apply.start "ranges=$ranges auto=$KRP_AUTO buffer=$KRP_AUTO_BUFFER listen=${KRP_LISTEN_IP:-all-loopback}"
 
-# Persist the apply-time filter parameters so audit --auto can reproduce the
-# same port-detection scope (only when --auto is used). When NOT using --auto,
-# remove any stale filters from a previous --auto run so audit doesn't load them.
-if [ "$KRP_AUTO" -eq 1 ]; then
-  krp_save_apply_filters
-else
-  filters_file=$(krp_filters_path)
-  [ -f "$filters_file" ] && rm -f "$filters_file"
-fi
-
 # ---------------------------------------------------------------------------
 # 1. Write the managed drop-in (idempotent: skip if byte-identical).
 # ---------------------------------------------------------------------------
@@ -78,6 +68,17 @@ else
   mv "$tmp" "$dropin" || { rm -f "$tmp"; die "cannot move $tmp -> $dropin"; }
   audit_log krp.apply.dropin "wrote=$dropin ranges=$ranges"
   info "wrote drop-in: $dropin"
+fi
+
+# Persist the apply-time filter parameters so audit --auto can reproduce the
+# same port-detection scope — only AFTER the drop-in is safely written, so a
+# failed drop-in write never leaves the filter state out of sync with it. When
+# NOT using --auto, remove any stale filters from a previous --auto run.
+if [ "$KRP_AUTO" -eq 1 ]; then
+  krp_save_apply_filters
+else
+  filters_file=$(krp_filters_path)
+  [ -f "$filters_file" ] && rm -f "$filters_file"
 fi
 
 # ---------------------------------------------------------------------------

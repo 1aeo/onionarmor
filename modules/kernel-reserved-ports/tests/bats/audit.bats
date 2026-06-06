@@ -118,6 +118,18 @@ load test_helper
   ! [[ "$output" == *"1500"* ]]
 }
 
+@test "audit --auto honors an explicit --min-port even when it equals the default" {
+  # Regression: persisted filters must be overridden by an EXPLICIT CLI flag,
+  # even one whose value equals the default (1024). A value-vs-default check
+  # would wrongly treat --min-port 1024 as "not set" and reload the saved 2000.
+  seed_instance relay1 "SocksPort 127.0.0.1:1500" "MetricsPort 127.0.0.1:48001"
+  bash "$APPLY" --auto --min-port 2000 >/dev/null   # drop-in reserves only 48001
+  run bash "$AUDIT" --auto --min-port 1024
+  [ "$status" -eq 1 ]
+  # 1500 is now in scope (>= explicit 1024) and not reserved -> drift names it.
+  [[ "$output" == *"1500"* ]]
+}
+
 @test "audit --auto with an explicit non-zero --auto-buffer does not abort (set -e)" {
   # Regression: krp_load_apply_filters must return success even when the current
   # --auto-buffer/--min-port is non-default. A trailing `cond && assign` that
