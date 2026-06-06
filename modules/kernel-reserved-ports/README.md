@@ -170,6 +170,7 @@ posture is consistent with onionarmor's role.
 |---|---|
 | `/etc/sysctl.d/99-onionarmor-reserved-ports.conf` | the managed drop-in (the reservation) |
 | `/var/lib/onionarmor/kernel-reserved-ports/backup.conf` | drop-in backup, written by `revert` |
+| `/var/lib/onionarmor/kernel-reserved-ports/apply-filters.conf` | the `--listen-ip`/`--min-port`/`--auto-buffer` from the last `apply --auto`, so `audit --auto` checks the same scope; cleared by `revert` |
 | `net.ipv4.ip_local_reserved_ports` (sysctl) | the live kernel reservation |
 
 Every path and external command is overridable via environment variables (see

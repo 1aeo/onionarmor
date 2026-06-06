@@ -397,7 +397,7 @@ krp_load_apply_filters() {
   local filters_file; filters_file=$(krp_filters_path)
   [ -f "$filters_file" ] || return 0
   [ "$KRP_AUTO" -eq 1 ] || return 0
-  
+
   # Read saved values from the file. Initialize to defaults in case the file
   # doesn't contain all keys (forward compat with older state files).
   local saved_listen_ip="" saved_min_port=1024 saved_auto_buffer=0
@@ -408,11 +408,14 @@ krp_load_apply_filters() {
       KRP_AUTO_BUFFER) saved_auto_buffer=$val ;;
     esac
   done < <(grep '^KRP_' "$filters_file")
-  
-  # Apply saved values only for parameters that are still at their defaults.
-  # The defaults are: LISTEN_IP="" MIN_PORT=1024 AUTO_BUFFER=0.
-  # If a parameter differs from its default, the user explicitly set it via CLI.
-  [ -z "$KRP_LISTEN_IP" ] && KRP_LISTEN_IP=$saved_listen_ip
-  [ "$KRP_MIN_PORT" -eq 1024 ] && KRP_MIN_PORT=$saved_min_port
-  [ "$KRP_AUTO_BUFFER" -eq 0 ] && KRP_AUTO_BUFFER=$saved_auto_buffer
+
+  # Apply saved values only for parameters still at their default — an explicit
+  # non-default CLI value wins. Use if/fi (not `cond && assign`): a trailing
+  # `&&` that evaluates false would make this function return non-zero and, as a
+  # bare call under `set -e` in audit.sh, abort the audit. `return 0` is belt
+  # and suspenders for the same reason.
+  if [ -z "$KRP_LISTEN_IP" ]; then KRP_LISTEN_IP=$saved_listen_ip; fi
+  if [ "$KRP_MIN_PORT" -eq 1024 ]; then KRP_MIN_PORT=$saved_min_port; fi
+  if [ "$KRP_AUTO_BUFFER" -eq 0 ]; then KRP_AUTO_BUFFER=$saved_auto_buffer; fi
+  return 0
 }

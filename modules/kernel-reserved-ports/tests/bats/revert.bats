@@ -32,6 +32,16 @@ load test_helper
   grep -q 'net.ipv4.ip_local_reserved_ports = 48010-48050' "$backup"
 }
 
+@test "revert: removes the persisted apply-filters.conf state" {
+  seed_metrics_fleet 48010 48050
+  bash "$APPLY" --auto --min-port 2000 >/dev/null
+  filters="$ONIONARMOR_KRP_STATE_DIR/apply-filters.conf"
+  [ -f "$filters" ]
+  run bash "$REVERT"
+  [ "$status" -eq 0 ]
+  [ ! -e "$filters" ]
+}
+
 @test "revert: clears runtime via sysctl -w then --system" {
   seed_metrics_fleet 48010 48050
   bash "$APPLY" --auto >/dev/null
