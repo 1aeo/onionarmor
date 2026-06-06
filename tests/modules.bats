@@ -31,6 +31,21 @@ setup() {
   [[ "$output" == *"net.ipv4.ip_local_reserved_ports = 9050-9090"* ]]
 }
 
+@test "list-modules: discovers bgp-hardening with its description" {
+  run "$BIN" list-modules
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"bgp-hardening"* ]]
+  [[ "$output" == *"RPKI-validate inbound"* ]]
+}
+
+@test "apply --module bgp-hardening --dry-run: routes to the module" {
+  # Host-independent: explicit peer, no bind-fix / RPKI so nothing is read or run.
+  run "$BIN" apply --module bgp-hardening --dry-run --no-bind-fix --no-enable-rpki --peer-ip 192.0.2.1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dry-run: bgp-hardening"* ]]
+  [[ "$output" == *"192.0.2.1"* ]]
+}
+
 @test "help: documents the module subcommands" {
   run "$BIN" help
   [ "$status" -eq 0 ]
