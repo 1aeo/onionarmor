@@ -15,6 +15,11 @@ _here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 krp_parse_flags "$@"
 
+# With --auto, load the apply-time filter parameters (if any) so the coverage
+# check uses the same port-detection scope that apply used. This prevents false
+# drift reports when apply was run with e.g. --listen-ip or --min-port.
+krp_load_apply_filters
+
 # Worst severity seen so far: 0 green, 1 yellow, 2 red.
 _krp_worst=0
 

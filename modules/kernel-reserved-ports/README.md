@@ -120,6 +120,13 @@ sudo onionarmor revert --module kernel-reserved-ports
    were added after the last apply, this turns **red** and names the uncovered
    band — *reservation drift*.
 
+When `audit --auto` runs, it automatically uses the **same filter parameters**
+(`--listen-ip`, `--min-port`, `--auto-buffer`) that were passed to the most
+recent `apply --auto` invocation. This ensures the drift detector compares
+apples to apples — it sees the same port set that apply originally reserved.
+You can override any filter explicitly (e.g., `audit --auto --listen-ip 127.0.0.2`)
+to check a different scope.
+
 ## Revert
 
 `revert`:

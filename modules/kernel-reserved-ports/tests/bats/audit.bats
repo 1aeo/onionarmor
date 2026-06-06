@@ -76,3 +76,44 @@ load test_helper
   ! [[ "$output" == *"drift:"* ]]
   ! [[ "$output" == *"NOT reserved"* ]]
 }
+
+@test "audit --auto uses apply-time --listen-ip filter (no false drift)" {
+  # Regression: apply with --listen-ip 127.0.0.2 detects only ports on that IP;
+  # audit --auto (without repeating the flag) must use the same filter, not
+  # default to all loopback addresses and falsely report drift.
+  seed_instance relay1 "MetricsPort 127.0.0.1:48001" "MetricsPort 127.0.0.2:48002"
+  bash "$APPLY" --auto --listen-ip 127.0.0.2 >/dev/null
+  # The drop-in has only 48002 (127.0.0.2), not 48001 (127.0.0.1).
+  run bash "$AUDIT" --auto
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"all green"* ]]
+  # Must NOT report 48001 as uncovered drift.
+  ! [[ "$output" == *"drift"* ]]
+  ! [[ "$output" == *"48001"* ]]
+}
+
+@test "audit --auto honors explicit --listen-ip over persisted filters" {
+  # When audit is given an explicit filter, it must use that, not the persisted one.
+  seed_instance relay1 "MetricsPort 127.0.0.1:48001" "MetricsPort 127.0.0.2:48002"
+  bash "$APPLY" --auto --listen-ip 127.0.0.2 >/dev/null
+  # Explicitly ask audit to check 127.0.0.1 (different from apply's 127.0.0.2).
+  run bash "$AUDIT" --auto --listen-ip 127.0.0.1
+  [ "$status" -eq 1 ]
+  # 48001 is on 127.0.0.1, which is NOT in the drop-in (only 48002 is), so drift.
+  [[ "$output" == *"drift"* ]]
+  [[ "$output" == *"48001"* ]]
+}
+
+@test "audit --auto uses apply-time --min-port filter (no false drift)" {
+  # Regression: apply with --min-port 2000 ignores ports below 2000; audit
+  # --auto (without repeating the flag) must use the same filter.
+  seed_instance relay1 "SocksPort 127.0.0.1:1500" "MetricsPort 127.0.0.1:48001"
+  bash "$APPLY" --auto --min-port 2000 >/dev/null
+  # The drop-in has only 48001 (>= 2000), not 1500 (< 2000).
+  run bash "$AUDIT" --auto
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"all green"* ]]
+  # Must NOT report 1500 as uncovered drift.
+  ! [[ "$output" == *"drift"* ]]
+  ! [[ "$output" == *"1500"* ]]
+}

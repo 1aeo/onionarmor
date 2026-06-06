@@ -55,6 +55,10 @@ fi
 
 audit_log krp.apply.start "ranges=$ranges auto=$KRP_AUTO buffer=$KRP_AUTO_BUFFER listen=${KRP_LISTEN_IP:-all-loopback}"
 
+# Persist the apply-time filter parameters so audit --auto can reproduce the
+# same port-detection scope (only when --auto is used).
+[ "$KRP_AUTO" -eq 1 ] && krp_save_apply_filters
+
 # ---------------------------------------------------------------------------
 # 1. Write the managed drop-in (idempotent: skip if byte-identical).
 # ---------------------------------------------------------------------------
