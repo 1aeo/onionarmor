@@ -30,7 +30,11 @@ setup() {
   export ONIONARMOR_KRP_PROC_FILE="$SB/proc/ip_local_reserved_ports"
   export ONIONARMOR_AUDIT_LOG="$SB/var/log/onionarmor/audit.log"
   export ONIONARMOR_OPERATOR="bats-test"
-  export DROPIN="$ONIONARMOR_SYSCTL_DIR/99-onionarmor-reserved-ports.conf"
+  # Derive DROPIN from the same knob lib.sh uses, so a test overriding the
+  # filename exercises the real production contract, not a hardcoded path.
+  : "${ONIONARMOR_KRP_DROPIN_NAME:=99-onionarmor-reserved-ports.conf}"
+  export ONIONARMOR_KRP_DROPIN_NAME
+  export DROPIN="$ONIONARMOR_SYSCTL_DIR/$ONIONARMOR_KRP_DROPIN_NAME"
 
   # --- sandbox torrc sources for --auto ---
   export ONIONARMOR_KRP_TOR_INSTANCES_DIR="$SB/etc/tor/instances"
@@ -88,7 +92,7 @@ _build_stubs() {
 #!/bin/sh
 LOG="${STUB_SYSCTL_LOG:-/dev/null}"
 PROC="${ONIONARMOR_KRP_PROC_FILE:?}"
-DROPIN="${ONIONARMOR_SYSCTL_DIR:?}/99-onionarmor-reserved-ports.conf"
+DROPIN="${ONIONARMOR_SYSCTL_DIR:?}/${ONIONARMOR_KRP_DROPIN_NAME:-99-onionarmor-reserved-ports.conf}"
 KEY="net.ipv4.ip_local_reserved_ports"
 printf '%s\n' "$*" >> "$LOG"
 case "$1" in
