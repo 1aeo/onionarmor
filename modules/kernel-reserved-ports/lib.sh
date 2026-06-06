@@ -385,7 +385,8 @@ krp_sysctl_runtime() {
 krp_save_apply_filters() {
   local filters_file; filters_file=$(krp_filters_path)
   mkdir -p "$ONIONARMOR_KRP_STATE_DIR" || die "cannot create $ONIONARMOR_KRP_STATE_DIR"
-  cat > "$filters_file" <<EOF
+  local tmp="$filters_file.tmp.$$"
+  cat > "$tmp" <<EOF || { rm -f "$tmp"; die "cannot write $tmp"; }
 # Managed by onionarmor (module: kernel-reserved-ports) — do not edit by hand.
 # The filter parameters from the most recent 'apply --auto' invocation,
 # persisted so 'audit --auto' can check coverage using the same detection scope.
@@ -393,6 +394,7 @@ KRP_LISTEN_IP=$KRP_LISTEN_IP
 KRP_MIN_PORT=$KRP_MIN_PORT
 KRP_AUTO_BUFFER=$KRP_AUTO_BUFFER
 EOF
+  mv "$tmp" "$filters_file" || { rm -f "$tmp"; die "cannot move $tmp -> $filters_file"; }
 }
 
 # krp_load_apply_filters: if the state file exists and the current invocation
