@@ -143,6 +143,34 @@ dropin_value() {
   [[ "$output" == *"start > end"* ]]
 }
 
+@test "apply: --reserved-range with an empty bound dies cleanly (not 'integer expression')" {
+  # Regression: "-5000" -> lo="" and "5000-" -> hi=""; each bound must be
+  # validated separately so we emit our die, not a bash [ -ge ] error.
+  run bash "$APPLY" --reserved-range -5000
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"non-numeric --reserved-range"* ]]
+  ! [[ "$output" == *"integer expression"* ]]
+
+  run bash "$APPLY" --reserved-range 5000-
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"non-numeric --reserved-range"* ]]
+  ! [[ "$output" == *"integer expression"* ]]
+}
+
+@test "apply --auto: a failed filter-persist warns but does not fail the apply" {
+  # Regression: krp_save_apply_filters is best-effort and runs AFTER the reload,
+  # so it can never block the reservation going live. Make the state dir
+  # uncreatable (its parent is a regular file) and confirm apply still succeeds.
+  seed_metrics_fleet 48010 48050
+  printf 'x' > "$SB/blocker"
+  ONIONARMOR_KRP_STATE_DIR="$SB/blocker/state" run bash "$APPLY" --auto
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"applied."* ]]
+  [[ "$output" == *"skipping apply-filter persistence"* ]]
+  # The reservation itself still went live.
+  [ "$(cat "$ONIONARMOR_KRP_PROC_FILE")" = "48010-48050" ]
+}
+
 @test "apply: reads /etc/tor/torrc.all and /run/tor-instances/*.defaults" {
   printf 'MetricsPort 127.0.0.1:48100\n' > "$ONIONARMOR_KRP_TORRC_ALL"
   printf 'ControlPort 127.0.0.1:29100\n' > "$ONIONARMOR_KRP_TOR_RUN_DIR/snoopdogg.defaults"
