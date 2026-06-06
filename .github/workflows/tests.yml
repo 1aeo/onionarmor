@@ -35,6 +35,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
-      - name: Lint bin/onionarmor + lib/*
+      - name: Lint bin/onionarmor + lib/* + install.sh
         run: |
-          shellcheck --severity=warning bin/onionarmor lib/*.sh tests/fixtures/fake-sysctl
+          shellcheck --severity=warning bin/onionarmor lib/*.sh install.sh tests/fixtures/fake-sysctl
