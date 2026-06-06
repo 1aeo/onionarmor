@@ -138,6 +138,14 @@ is bounded by design:
     log is a plain append-only record, not cryptographically tamper-evident;
     treat it as an operator audit trail, not an integrity control.
 
+## Modules and their threat models
+
+Each hardening [module](README.md#modules) documents **what it does and does not defend against** in its own README. Read the threat model before applying — a module that hardens one layer (e.g. DNS) is not a substitute for trusting your upstreams or for application-level controls.
+
+- **`dns-posture`** (DoT + DNSSEC + `unbound`, `systemd-resolved` masked): see the [threat model](modules/dns-posture/README.md#threat-model--honest-about-the-limits). In brief:
+  - **Defends against** passive network observers, on-path DNS tampering/MITM, and an untrusted ISP/local resolver.
+  - **Does _not_ defend against** a malicious-but-valid-PKI upstream, applications with hard-coded resolvers, or browser DoH bypass.
+
 ## Reporting a vulnerability
 
 Report security issues privately through either channel:
