@@ -181,6 +181,11 @@ krp_backup_path() {
   printf '%s/backup.conf\n' "$ONIONARMOR_KRP_STATE_DIR"
 }
 
+# krp_filters_path -> the apply-time filter parameters state file.
+krp_filters_path() {
+  printf '%s/apply-filters.conf\n' "$ONIONARMOR_KRP_STATE_DIR"
+}
+
 # --- torrc discovery ------------------------------------------------------
 # krp_torrc_sources: print every candidate torrc file path that exists, one per
 # line, in a stable order.
@@ -366,4 +371,41 @@ krp_render_dropin() {
 # krp_sysctl_runtime: the live value of the managed key (empty if unreadable).
 krp_sysctl_runtime() {
   "$ONIONARMOR_SYSCTL_CMD" -n "$KRP_SYSCTL_KEY" 2>/dev/null || printf ''
+}
+
+# krp_save_apply_filters: persist the current filter parameters (listen-ip,
+# min-port, auto-buffer) to the state file so audit --auto can reproduce the
+# same port-detection query that apply used.
+krp_save_apply_filters() {
+  local filters_file; filters_file=$(krp_filters_path)
+  mkdir -p "$ONIONARMOR_KRP_STATE_DIR" || die "cannot create $ONIONARMOR_KRP_STATE_DIR"
+  cat > "$filters_file" <<EOF
+# Managed by onionarmor (module: kernel-reserved-ports) — do not edit by hand.
+# The filter parameters from the most recent 'apply --auto' invocation,
+# persisted so 'audit --auto' can check coverage using the same detection scope.
+KRP_LISTEN_IP=$KRP_LISTEN_IP
+KRP_MIN_PORT=$KRP_MIN_PORT
+KRP_AUTO_BUFFER=$KRP_AUTO_BUFFER
+EOF
+}
+
+# krp_load_apply_filters: if the state file exists and the current invocation
+# is in --auto mode with default filter values, load the persisted filters.
+# This ensures audit --auto uses the same detection scope as the last apply.
+krp_load_apply_filters() {
+  local filters_file; filters_file=$(krp_filters_path)
+  [ -f "$filters_file" ] || return 0
+  [ "$KRP_AUTO" -eq 1 ] || return 0
+  
+  # Only load persisted filters if the user hasn't explicitly overridden them.
+  # The defaults are: LISTEN_IP="" MIN_PORT=1024 AUTO_BUFFER=0.
+  # If any filter is non-default, the user has explicitly set it — honor that.
+  local defaults_intact=1
+  [ -n "$KRP_LISTEN_IP" ] && defaults_intact=0
+  [ "$KRP_MIN_PORT" -ne 1024 ] && defaults_intact=0
+  [ "$KRP_AUTO_BUFFER" -ne 0 ] && defaults_intact=0
+  [ "$defaults_intact" -eq 0 ] && return 0
+  
+  # shellcheck source=/dev/null
+  . "$filters_file"
 }
