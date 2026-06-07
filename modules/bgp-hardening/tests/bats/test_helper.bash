@@ -172,6 +172,10 @@ EOF
   cat > "$STUB/apt-get" <<'EOF'
 #!/bin/sh
 printf '%s\n' "$*" >> "${STUB_APT_LOG:-/dev/null}"
+# FAKE_APT_RC lets a test simulate an apt failure (e.g. install can't complete).
+case "$*" in
+  *install*) [ "${FAKE_APT_RC:-0}" -ne 0 ] && exit "${FAKE_APT_RC}" ;;
+esac
 case "$*" in
   *install*routinator*)
     mkdir -p "$(dirname "${ONIONARMOR_BGP_ROUTINATOR:?}")"

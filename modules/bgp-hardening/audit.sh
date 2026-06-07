@@ -81,7 +81,9 @@ if [ ! -e "$marker" ]; then
   bgp_check green "RPKI validation" "not configured (optional; minimal value for a single-homed stub AS — see README)"
 elif [ "$rpki_running" -ne 1 ]; then
   bgp_check red "RPKI validation" "FRR configured for RPKI but routinator is not active"
-elif printf '%s\n' "$frr_rpki" | grep -qE "$BGP_RPKI_CACHE_HOST|rpki"; then
+elif printf '%s\n' "$frr_rpki" | grep -qF "$BGP_RPKI_CACHE_HOST"; then
+  # Match the configured cache host specifically — not a bare "rpki" substring,
+  # which could appear in unrelated/error output and false-pass.
   bgp_check green "RPKI validation" "routinator active; FRR querying cache $BGP_RPKI_CACHE_HOST:$BGP_RPKI_CACHE_PORT"
 else
   bgp_check yellow "RPKI validation" "routinator active but FRR shows no rpki cache (reload FRR?)"

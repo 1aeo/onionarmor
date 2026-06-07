@@ -109,8 +109,11 @@ fi
 # 1a. Override -l implicit --no_kernel: when bgpd starts with -l, it implies
 # --no_kernel, preventing learned routes from being installed into the kernel.
 # Apply 'no bgp no-rib' to override that and preserve the full-feed use case.
+# Gated on bind-fix being ON (not on a change *this run*): if -l is already in
+# bgpd_options but the override never landed (a prior apply failed, or -l was set
+# out of band), a later apply must still install it. The marker keeps it idempotent.
 # ---------------------------------------------------------------------------
-if [ "$BGP_BIND_FIX" -eq 1 ] && [ "$bgpd_options_changed" -eq 1 ]; then
+if [ "$BGP_BIND_FIX" -eq 1 ]; then
   if [ -e "$(bgp_norib_marker_path)" ]; then
     info "listener -l no-rib override already configured"
   elif bgp_render_norib_config | bgp_vtysh_apply; then
@@ -162,9 +165,13 @@ if [ "$BGP_RPKI" -eq 1 ]; then
       DEBIAN_FRONTEND=noninteractive "$ONIONARMOR_BGP_APT" install -y --no-install-recommends routinator \
         || die "bgp-hardening: apt-get install routinator failed"
     fi
-    "$ONIONARMOR_BGP_SYSTEMCTL" enable --now routinator >/dev/null 2>&1 \
-      || warn "could not enable+start routinator via systemctl"
-    : > "$(bgp_routinator_marker_path)"
+    if "$ONIONARMOR_BGP_SYSTEMCTL" enable --now routinator >/dev/null 2>&1; then
+      # Mark it module-managed ONLY on success, so revert won't disable a
+      # validator we never actually started.
+      : > "$(bgp_routinator_marker_path)"
+    else
+      warn "could not enable+start routinator via systemctl — not marking it module-managed"
+    fi
     any_changed=1
   fi
   # Configure FRR's rpki cache + route-map once (idempotent: the marker means

@@ -50,30 +50,42 @@ fi
 # 3. Remove the FRR rpki cache + route-map; disable (but keep) the validator.
 # ---------------------------------------------------------------------------
 if [ -e "$marker" ]; then
-  {
-    printf 'rpki\n'
-    printf ' no rpki cache %s %s\n' "$BGP_RPKI_CACHE_HOST" "$BGP_RPKI_CACHE_PORT"
-    printf ' exit\n'
-    printf 'no route-map %s\n' "$BGP_RPKI_ROUTEMAP"
-  } | bgp_vtysh_apply || warn "could not remove FRR rpki/route-map config via vtysh"
-  rm -f "$marker" || true
-  audit_log bgp.revert.rpki "removed=$BGP_RPKI_ROUTEMAP"
-  info "removed FRR rpki cache + route-map $BGP_RPKI_ROUTEMAP"
-  touched=1
+  # Only clear the marker if vtysh actually removed the live config — otherwise
+  # FRR may still hold the onionarmor RPKI settings while audit would report it
+  # unconfigured. Keeping the marker lets a re-run retry the removal.
+  if {
+       printf 'rpki\n'
+       printf ' no rpki cache %s %s\n' "$BGP_RPKI_CACHE_HOST" "$BGP_RPKI_CACHE_PORT"
+       printf ' exit\n'
+       printf 'no route-map %s\n' "$BGP_RPKI_ROUTEMAP"
+     } | bgp_vtysh_apply; then
+    rm -f "$marker" || true
+    audit_log bgp.revert.rpki "removed=$BGP_RPKI_ROUTEMAP"
+    info "removed FRR rpki cache + route-map $BGP_RPKI_ROUTEMAP"
+    touched=1
+  else
+    warn "could not remove FRR rpki/route-map via vtysh — keeping marker so a re-run retries"
+  fi
 fi
 
-# Remove the no-rib override if we applied it.
+# Undo the no-rib override if we applied it. CRITICAL: re-assert 'no bgp no-rib'
+# (rib ON) — never push 'bgp no-rib', which would DISABLE kernel route
+# installation and leave bgpd worse than the pre-apply full-feed posture. With
+# the daemons file restored (no -l), 'no bgp no-rib' equals the FRR default.
 norib_marker=$(bgp_norib_marker_path)
 if [ -e "$norib_marker" ]; then
-  {
-    printf 'router bgp\n'
-    printf ' bgp no-rib\n'
-    printf ' exit\n'
-  } | bgp_vtysh_apply || warn "could not remove FRR no-rib override via vtysh"
-  rm -f "$norib_marker" || true
-  audit_log bgp.revert.norib "removed=no_bgp_no-rib"
-  info "removed 'no bgp no-rib' override"
-  touched=1
+  if {
+       printf 'router bgp\n'
+       printf ' no bgp no-rib\n'
+       printf ' exit\n'
+     } | bgp_vtysh_apply; then
+    rm -f "$norib_marker" || true
+    audit_log bgp.revert.norib "restored=rib-on"
+    info "ensured 'no bgp no-rib' (kernel route installation stays on)"
+    touched=1
+  else
+    warn "could not re-assert 'no bgp no-rib' via vtysh — keeping marker so a re-run retries"
+  fi
 fi
 
 # Validator stays installed, just stopped + disabled (only if we enabled it).

@@ -56,3 +56,29 @@ teardown() { [ -n "${SB:-}" ] && rm -rf "$SB"; }
   [[ "$output" == *"203.0.113.0/24"* ]]
   ! [[ "$output" == *"192.0.2.0/24"* ]]
 }
+
+@test "check-own-roa-status: an UNKNOWN/unreachable status -> exit 2" {
+  # Stub returns a non valid/invalid word -> normalized to error -> exit 2.
+  cat > "$SB/fetch" <<'EOF'
+#!/bin/sh
+echo unknown
+EOF
+  chmod +x "$SB/fetch"
+  run bash "$HELPER" --prefix 198.51.100.0/24
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"UNKNOWN"* ]]
+}
+
+@test "check-own-roa-status: multiple --prefix flags accumulate" {
+  run bash "$HELPER" --prefix 203.0.113.0/24 --prefix 198.51.100.0/24
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"203.0.113.0/24"* ]]
+  [[ "$output" == *"198.51.100.0/24"* ]]
+  [[ "$output" == *"all 2 announced prefix(es) are RPKI-VALID"* ]]
+}
+
+@test "check-own-roa-status: a value flag with no value errors clearly" {
+  run bash "$HELPER" --asn
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--asn requires a value"* ]]
+}

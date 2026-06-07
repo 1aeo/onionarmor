@@ -157,6 +157,15 @@ daemons_options() {
   [ ! -s "$STUB_APT_LOG" ]
 }
 
+@test "apply --enable-rpki: a routinator install failure fails the apply (not fail-open)" {
+  # Negative path: if the operator opted into RPKI and the validator can't even
+  # be installed, apply must error rather than report success.
+  seed_frr 1.2.3.4 192.0.2.1
+  FAKE_APT_RC=100 run bash "$APPLY" --enable-rpki
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"apt-get install routinator failed"* ]]
+}
+
 @test "test_README_documents_stub_AS_caveat" {
   # Sanity-check that the doc still carries the stub-AS RPKI caveat.
   grep -q 'When NOT to use RPKI' "$MOD_ROOT/README.md"
