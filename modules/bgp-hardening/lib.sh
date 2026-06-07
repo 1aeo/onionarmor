@@ -9,17 +9,19 @@
 # Sourced by apply.sh, audit.sh, revert.sh. Reuses the top-level lib/common.sh
 # for info/warn/die/audit_log. EVERY external command and filesystem path is
 # overridable via env so the bats suite drives the whole module against a
-# sandbox with stub binaries (vtysh, nft, ufw, systemctl, ss, apt-get), never
+# sandbox with stub binaries (vtysh, nft, systemctl, ss, apt-get), never
 # touching the real host.
 #
 # WHAT THIS MODULE DOES
-#   Applies safe defaults to an FRR bgpd that takes a full feed from a single
-#   trusted transit peer:
-#     1. bind bgpd's listener to a specific peer-facing IP (not 0.0.0.0/[::]),
-#     2. restrict inbound tcp/179 to the known peer IP(s) at the firewall,
-#     3. validate inbound origins with RPKI (Routinator) — drop INVALID, keep
-#        VALID + UNKNOWN (preserves the operator's full feed),
-#     4. optionally enable GTSM/ttl-security (requires peer cooperation).
+#   For an FRR bgpd that takes a full feed from a single trusted transit peer:
+#     1. (default) bind bgpd's listener to a specific peer-facing IP (not
+#        0.0.0.0/[::]) — the one high-value fix for a single-homed stub AS;
+#     2. (--enable-firewall) restrict inbound tcp/179 to the known peer IP(s)
+#        with nftables (ufw deferred);
+#     3. (--enable-rpki) validate inbound origins with RPKI (Routinator) — drop
+#        INVALID, keep VALID + UNKNOWN; off by default because for a single-homed
+#        stub AS it changes no forwarding decision (see README);
+#     4. (--enable-gtsm) GTSM/ttl-security (requires peer cooperation).
 #   It deliberately does NOT enforce TCP-MD5, maximum-prefix, or a restrictive
 #   inbound prefix filter — see the README "Out of scope" section.
 
