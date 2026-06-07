@@ -186,13 +186,20 @@ fi
 # 4. GTSM / ttl-security (opt-in; requires peer cooperation).
 # ---------------------------------------------------------------------------
 if [ "$BGP_GTSM" -eq 1 ]; then
-  if printf '%s\n' "$peers" | bgp_render_gtsm_config | bgp_vtysh_apply; then
-    while IFS= read -r p; do
-      [ -n "$p" ] || continue
-      printf '%s %s\n' "$p" "$BGP_GTSM_HOPS"
-    done <<EOF > "$(bgp_gtsm_marker_path)"
+  # Build the desired marker content (peer IP + hops for each peer)
+  desired_gtsm=""
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    desired_gtsm="${desired_gtsm}${p} ${BGP_GTSM_HOPS}"$'\n'
+  done <<EOF
 $peers
 EOF
+  # Check if already applied with the same configuration (idempotent)
+  gtsm_marker=$(bgp_gtsm_marker_path)
+  if [ -e "$gtsm_marker" ] && [ "$(cat "$gtsm_marker" 2>/dev/null || true)" = "$desired_gtsm" ]; then
+    info "GTSM: FRR already configured (ttl-security hops $BGP_GTSM_HOPS per neighbor)"
+  elif printf '%s\n' "$peers" | bgp_render_gtsm_config | bgp_vtysh_apply; then
+    printf '%s' "$desired_gtsm" > "$gtsm_marker"
     audit_log bgp.apply.gtsm "hops=$BGP_GTSM_HOPS peers=$peer_list_oneline"
     info "GTSM: set ttl-security hops $BGP_GTSM_HOPS per neighbor (requires peer cooperation to take effect)"
     frr_changed=1; any_changed=1
