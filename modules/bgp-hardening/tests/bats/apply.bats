@@ -128,6 +128,8 @@ daemons_options() {
   run bash "$APPLY" --enable-gtsm --gtsm-hops 3
   [ "$status" -eq 0 ]
   grep -q 'neighbor 192.0.2.1 ttl-security hops 3' "$STUB_VTYSH_LOG"
+  # ttl-security must be applied under `router bgp`, not as a bare neighbor line.
+  grep -q 'router bgp' "$STUB_VTYSH_LOG"
 }
 
 @test "apply: --enable-gtsm without --gtsm-hops is rejected" {

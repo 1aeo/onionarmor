@@ -71,6 +71,9 @@ daemons_options() {
   run bash "$REVERT"
   [ "$status" -eq 0 ]
   [[ "$output" == *"no daemons backup"* ]]
+  # A no-op revert must not touch the live routing stack (no restart/reload).
+  [ ! -f "$STUB_STATE/systemctl.log" ] || ! grep -qE 'reload frr|restart frr' "$STUB_STATE/systemctl.log"
+  [[ "$output" == *"no changes made"* ]]
 }
 
 @test "revert: writes audit-log entries" {
