@@ -189,6 +189,7 @@ bgp_rpki_marker_path()    { printf '%s/rpki.applied\n' "$ONIONARMOR_BGP_STATE_DI
 bgp_routinator_marker_path() { printf '%s/routinator.enabled\n' "$ONIONARMOR_BGP_STATE_DIR"; }
 bgp_gtsm_marker_path()    { printf '%s/gtsm.applied\n' "$ONIONARMOR_BGP_STATE_DIR"; }
 bgp_norib_marker_path()   { printf '%s/norib.applied\n' "$ONIONARMOR_BGP_STATE_DIR"; }
+bgp_firewall_peers_path() { printf '%s/firewall.peers\n' "$ONIONARMOR_BGP_STATE_DIR"; }
 
 # --- FRR config auto-detection --------------------------------------------
 # bgp_detect_router_id: first `bgp router-id <ip>` in the FRR config, or empty.

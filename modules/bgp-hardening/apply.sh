@@ -122,6 +122,10 @@ if [ "$BGP_BIND_FIX" -eq 1 ]; then
     info "configured 'no bgp no-rib' to override -l implicit --no_kernel (preserves full feed)"
     frr_changed=1; any_changed=1
   else
+    # If we changed bgpd_options THIS RUN, norib override is mandatory —
+    # restarting bgpd with -l but without the override leaves the host worse.
+    [ "$bgpd_options_changed" -eq 1 ] \
+      && die "bgp-hardening: norib override failed after setting -l in bgpd_options — cannot proceed (vtysh unavailable?)"
     warn "listener -l no-rib override not applied (vtysh unavailable?) — BGP routes may not install into kernel"
   fi
 fi
@@ -146,6 +150,9 @@ if [ "$BGP_DO_FIREWALL" -eq 1 ]; then
     info "firewall: nft table inet $BGP_NFT_TABLE restricts tcp/179 to { $peer_list_oneline }"
     any_changed=1
   fi
+  # Persist the peer list used for firewall rules so audit can verify against
+  # the actual deployed config, not just auto-detected peers.
+  printf '%s\n' "$peers" > "$(bgp_firewall_peers_path)" || true
 fi
 
 # ---------------------------------------------------------------------------

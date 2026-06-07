@@ -45,7 +45,14 @@ fi
 # --- (b) firewall restricts tcp/179 (OPTIONAL defense-in-depth) ----------
 # The :179 firewall is opt-in (--enable-firewall), so its absence is fine —
 # never red. When it IS in place, validate it.
-peers=$(bgp_resolve_peers)
+# Use the persisted peer list from apply (if available) to check against the
+# actual deployed config, not just auto-detected peers (handles --peer-ip overrides).
+firewall_peers_file=$(bgp_firewall_peers_path)
+if [ -e "$firewall_peers_file" ] && [ -s "$firewall_peers_file" ]; then
+  peers=$(cat "$firewall_peers_file" 2>/dev/null || true)
+else
+  peers=$(bgp_resolve_peers)
+fi
 cur=$(bgp_nft_current)
 if [ -z "$cur" ]; then
   bgp_check green "firewall tcp/179" "not configured (optional defense-in-depth; --enable-firewall to add)"

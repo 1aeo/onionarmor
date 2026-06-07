@@ -45,6 +45,8 @@ if [ -n "$(bgp_nft_current)" ]; then
 else
   info "no managed nft table inet $BGP_NFT_TABLE to remove"
 fi
+# Clean up the persisted firewall peers file
+rm -f "$(bgp_firewall_peers_path)" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # 3. Remove the FRR rpki cache + route-map; disable (but keep) the validator.
@@ -91,10 +93,12 @@ fi
 # Validator stays installed, just stopped + disabled (only if we enabled it).
 routinator_marker=$(bgp_routinator_marker_path)
 if [ -e "$routinator_marker" ]; then
-  "$ONIONARMOR_BGP_SYSTEMCTL" disable --now routinator >/dev/null 2>&1 \
-    && info "disabled routinator (left installed)" \
-    || info "routinator not disabled (not present or already inactive)"
-  rm -f "$routinator_marker" || true
+  if "$ONIONARMOR_BGP_SYSTEMCTL" disable --now routinator >/dev/null 2>&1; then
+    rm -f "$routinator_marker" || true
+    info "disabled routinator (left installed)"
+  else
+    info "routinator disable failed (not present or error) — keeping marker so a re-run retries"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -104,7 +108,10 @@ gtsm_marker=$(bgp_gtsm_marker_path)
 if [ -e "$gtsm_marker" ]; then
   gtsm_data=$(cat "$gtsm_marker" 2>/dev/null || true)
   if [ -n "$gtsm_data" ]; then
-    {
+    # Only clear the marker if vtysh actually removed the live config — otherwise
+    # FRR may still hold the GTSM settings while audit would report it unconfigured.
+    # Keeping the marker lets a re-run retry the removal.
+    if {
       while read -r p hops; do
         [ -n "$p" ] || continue
         [ -n "$hops" ] || hops=1
@@ -112,12 +119,15 @@ if [ -e "$gtsm_marker" ]; then
       done <<EOF
 $gtsm_data
 EOF
-    } | bgp_vtysh_apply || warn "could not remove FRR GTSM config via vtysh"
-    audit_log bgp.revert.gtsm "removed_peers=$(printf '%s' "$gtsm_data" | awk '{print $1}' | tr '\n' ' ')"
-    info "removed GTSM ttl-security configuration"
-    touched=1
+    } | bgp_vtysh_apply; then
+      rm -f "$gtsm_marker" || true
+      audit_log bgp.revert.gtsm "removed_peers=$(printf '%s' "$gtsm_data" | awk '{print $1}' | tr '\n' ' ')"
+      info "removed GTSM ttl-security configuration"
+      touched=1
+    else
+      warn "could not remove FRR GTSM config via vtysh — keeping marker so a re-run retries"
+    fi
   fi
-  rm -f "$gtsm_marker" || true
 fi
 
 # ---------------------------------------------------------------------------
