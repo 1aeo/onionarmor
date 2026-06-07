@@ -198,13 +198,40 @@ EOF
   gtsm_marker=$(bgp_gtsm_marker_path)
   if [ -e "$gtsm_marker" ] && [ "$(cat "$gtsm_marker" 2>/dev/null || true)" = "$desired_gtsm" ]; then
     info "GTSM: FRR already configured (ttl-security hops $BGP_GTSM_HOPS per neighbor)"
-  elif printf '%s\n' "$peers" | bgp_render_gtsm_config | bgp_vtysh_apply; then
-    printf '%s' "$desired_gtsm" > "$gtsm_marker"
-    audit_log bgp.apply.gtsm "hops=$BGP_GTSM_HOPS peers=$peer_list_oneline"
-    info "GTSM: set ttl-security hops $BGP_GTSM_HOPS per neighbor (requires peer cooperation to take effect)"
-    frr_changed=1; any_changed=1
   else
-    warn "GTSM: vtysh did not apply ttl-security"
+    # Marker differs or doesn't exist: remove stale GTSM from old peers not in new list
+    gtsm_config=""
+    if [ -e "$gtsm_marker" ]; then
+      old_marker=$(cat "$gtsm_marker" 2>/dev/null || true)
+      if [ -n "$old_marker" ]; then
+        # Extract old peer IPs and their hop counts from the marker
+        removed_peers=""
+        while IFS=' ' read -r old_peer old_hops; do
+          [ -n "$old_peer" ] || continue
+          # Check if this peer is still in the new peer list
+          if ! printf '%s\n' "$peers" | grep -qxF "$old_peer"; then
+            removed_peers="${removed_peers}${old_peer}"$'\n'
+          fi
+        done <<EOF
+$old_marker
+EOF
+        # Generate removal config for peers no longer in the list
+        if [ -n "$removed_peers" ]; then
+          gtsm_config=$(printf '%s' "$removed_peers" | bgp_render_gtsm_removal "$old_hops")$'\n'
+        fi
+      fi
+    fi
+    # Append the new GTSM config for current peers
+    gtsm_config="${gtsm_config}$(printf '%s\n' "$peers" | bgp_render_gtsm_config)"
+    # Apply the combined config (removals first, then additions)
+    if printf '%s\n' "$gtsm_config" | bgp_vtysh_apply; then
+      printf '%s' "$desired_gtsm" > "$gtsm_marker"
+      audit_log bgp.apply.gtsm "hops=$BGP_GTSM_HOPS peers=$peer_list_oneline"
+      info "GTSM: set ttl-security hops $BGP_GTSM_HOPS per neighbor (requires peer cooperation to take effect)"
+      frr_changed=1; any_changed=1
+    else
+      warn "GTSM: vtysh did not apply ttl-security"
+    fi
   fi
 fi
 

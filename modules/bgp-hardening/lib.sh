@@ -338,6 +338,15 @@ bgp_render_gtsm_config() {
   done
 }
 
+# bgp_render_gtsm_removal <peer-per-line-on-stdin> <hops>: remove ttl-security from peers.
+bgp_render_gtsm_removal() {
+  local p hops=$1
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    printf 'no neighbor %s ttl-security hops %s\n' "$p" "$hops"
+  done
+}
+
 # bgp_vtysh_apply <config-lines-on-stdin>: feed config lines to vtysh inside a
 # single configure-terminal batch, then persist. Best-effort wrapper used by
 # apply for the rpki/route-map/gtsm config.
