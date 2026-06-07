@@ -210,14 +210,14 @@ EOF
           [ -n "$old_peer" ] || continue
           # Check if this peer is still in the new peer list
           if ! printf '%s\n' "$peers" | grep -qxF "$old_peer"; then
-            removed_peers="${removed_peers}${old_peer}"$'\n'
+            removed_peers="${removed_peers}${old_peer} ${old_hops}"$'\n'
           fi
         done <<EOF
 $old_marker
 EOF
         # Generate removal config for peers no longer in the list
         if [ -n "$removed_peers" ]; then
-          gtsm_config=$(printf '%s' "$removed_peers" | bgp_render_gtsm_removal "$old_hops")$'\n'
+          gtsm_config=$(printf '%s' "$removed_peers" | bgp_render_gtsm_removal)$'\n'
         fi
       fi
     fi

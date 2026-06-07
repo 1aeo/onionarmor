@@ -340,10 +340,10 @@ bgp_render_gtsm_config() {
   done
 }
 
-# bgp_render_gtsm_removal <peer-per-line-on-stdin> <hops>: remove ttl-security from peers.
+# bgp_render_gtsm_removal <peer-hops-per-line-on-stdin>: remove ttl-security from peers.
 bgp_render_gtsm_removal() {
-  local p hops=$1
-  while IFS= read -r p; do
+  local p hops
+  while IFS=' ' read -r p hops; do
     [ -n "$p" ] || continue
     printf 'no neighbor %s ttl-security hops %s\n' "$p" "$hops"
   done
