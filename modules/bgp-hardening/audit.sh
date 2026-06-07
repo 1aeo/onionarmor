@@ -70,7 +70,10 @@ else
   missing=""
   while IFS= read -r p; do
     [ -n "$p" ] || continue
-    printf '%s\n' "$cur" | grep -qF "$p" || missing="$missing $p"
+    # Escape dots for regex and match with non-IP-character boundaries to avoid
+    # substring false positives (e.g. 10.0.0.1 inside 10.0.0.10).
+    escaped=$(printf '%s' "$p" | sed 's/\./\\./g')
+    printf '%s\n' "$cur" | grep -qE "(^|[^0-9.])$escaped([^0-9.]|$)" || missing="$missing $p"
   done <<EOF
 $peers
 EOF
