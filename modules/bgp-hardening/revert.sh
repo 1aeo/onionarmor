@@ -112,13 +112,15 @@ if [ -e "$gtsm_marker" ]; then
     # FRR may still hold the GTSM settings while audit would report it unconfigured.
     # Keeping the marker lets a re-run retry the removal.
     if {
+      printf 'router bgp\n'
       while read -r p hops; do
         [ -n "$p" ] || continue
         [ -n "$hops" ] || hops=1
-        printf 'no neighbor %s ttl-security hops %s\n' "$p" "$hops"
+        printf ' no neighbor %s ttl-security hops %s\n' "$p" "$hops"
       done <<EOF
 $gtsm_data
 EOF
+      printf ' exit\n'
     } | bgp_vtysh_apply; then
       rm -f "$gtsm_marker" || true
       audit_log bgp.revert.gtsm "removed_peers=$(printf '%s' "$gtsm_data" | awk '{print $1}' | tr '\n' ' ')"
@@ -135,6 +137,8 @@ fi
 # ---------------------------------------------------------------------------
 if [ "${ONIONARMOR_SKIP_RELOAD:-}" = "yes" ]; then
   info "ONIONARMOR_SKIP_RELOAD=yes — skipping FRR reload"
+elif [ "$touched" -eq 0 ]; then
+  info "no changes made — skipping FRR reload"
 else
   if [ "$daemons_restored" -eq 1 ]; then
     # Daemons file restored means bgpd_options changed, which requires restart.

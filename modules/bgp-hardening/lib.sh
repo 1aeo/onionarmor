@@ -335,10 +335,12 @@ bgp_render_norib_config() {
 # bgp_render_gtsm_config <peer-per-line-on-stdin>: per-neighbor ttl-security.
 bgp_render_gtsm_config() {
   local p
+  printf 'router bgp\n'
   while IFS= read -r p; do
     [ -n "$p" ] || continue
-    printf 'neighbor %s ttl-security hops %s\n' "$p" "$BGP_GTSM_HOPS"
+    printf ' neighbor %s ttl-security hops %s\n' "$p" "$BGP_GTSM_HOPS"
   done
+  printf ' exit\n'
 }
 
 # bgp_render_gtsm_removal <peer-hops-per-line-on-stdin>: remove ttl-security from peers.
