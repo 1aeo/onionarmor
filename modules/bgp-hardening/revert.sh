@@ -40,14 +40,20 @@ fi
 # ---------------------------------------------------------------------------
 firewall_peers_marker=$(bgp_firewall_peers_path)
 if [ -e "$firewall_peers_marker" ]; then
+  # Drop the ownership marker ONLY when the table is actually gone — otherwise a
+  # failed delete would lose ownership state while tcp/179 is still filtered.
+  fw_table_gone=1
   if [ -n "$(bgp_nft_current)" ]; then
-    "$ONIONARMOR_BGP_NFT" delete table inet "$BGP_NFT_TABLE" >/dev/null 2>&1 \
-      && { audit_log bgp.revert.firewall "removed=nft:$BGP_NFT_TABLE"; info "removed nft table inet $BGP_NFT_TABLE"; touched=1; } \
-      || warn "could not delete nft table inet $BGP_NFT_TABLE"
+    if "$ONIONARMOR_BGP_NFT" delete table inet "$BGP_NFT_TABLE" >/dev/null 2>&1; then
+      audit_log bgp.revert.firewall "removed=nft:$BGP_NFT_TABLE"; info "removed nft table inet $BGP_NFT_TABLE"; touched=1
+    else
+      warn "could not delete nft table inet $BGP_NFT_TABLE — keeping firewall.peers marker so a re-run retries"
+      fw_table_gone=0
+    fi
   else
     info "no managed nft table inet $BGP_NFT_TABLE to remove"
   fi
-  rm -f "$firewall_peers_marker" 2>/dev/null || true
+  [ "$fw_table_gone" -eq 1 ] && rm -f "$firewall_peers_marker" 2>/dev/null || true
 else
   info "firewall not managed by this module (no ownership marker) — leaving nft table inet $BGP_NFT_TABLE as-is"
 fi

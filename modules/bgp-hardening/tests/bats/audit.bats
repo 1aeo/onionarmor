@@ -65,6 +65,20 @@ load test_helper
   ! [[ "$output" == *"[FAIL] firewall"* ]]
 }
 
+@test "audit: opted-in firewall whose table vanished is red (not green 'not configured')" {
+  # Ownership marker present (apply --enable-firewall ran) but the nft table is
+  # gone -> drift, must be red rather than a misleading green "not configured".
+  seed_frr 1.2.3.4 192.0.2.1
+  seed_daemons 1.2.3.4
+  mkdir -p "$ONIONARMOR_BGP_STATE_DIR"
+  printf '192.0.2.1\n' > "$ONIONARMOR_BGP_STATE_DIR/firewall.peers"
+  : > "$NFT_STORE"   # table empty/gone
+  run bash "$AUDIT"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"firewall tcp/179"* ]]
+  [[ "$output" == *"the managed nft table"*"is gone"* ]]
+}
+
 @test "audit: opted-in firewall missing its default drop is red" {
   # A configured-but-broken firewall (operator opted in) is still a failure.
   seed_frr 1.2.3.4 192.0.2.1

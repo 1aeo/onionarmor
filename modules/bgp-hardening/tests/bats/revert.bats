@@ -34,6 +34,18 @@ daemons_options() {
   ! "$ONIONARMOR_BGP_NFT" list table inet onionarmor_bgp >/dev/null 2>&1
 }
 
+@test "revert: keeps the firewall.peers marker when the nft delete fails" {
+  seed_frr 1.2.3.4 192.0.2.1
+  bash "$APPLY" --enable-firewall >/dev/null
+  marker="$ONIONARMOR_BGP_STATE_DIR/firewall.peers"
+  [ -f "$marker" ]
+  FAKE_NFT_DELETE_RC=1 run bash "$REVERT"
+  [ "$status" -eq 0 ]
+  # Delete failed -> ownership marker retained so a re-run retries.
+  [ -f "$marker" ]
+  [[ "$output" == *"keeping firewall.peers marker"* ]]
+}
+
 @test "revert: disables routinator but leaves it installed" {
   seed_frr 1.2.3.4 192.0.2.1
   bash "$APPLY" --enable-rpki >/dev/null

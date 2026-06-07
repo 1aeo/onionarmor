@@ -152,7 +152,8 @@ case "$1" in
       ruleset) cat "$STORE" 2>/dev/null; exit 0 ;;
     esac ;;
   delete)
-    [ "$2" = "table" ] && { rm -f "$STORE"; exit 0; } ;;
+    # FAKE_NFT_DELETE_RC lets a test simulate a failed table delete.
+    [ "$2" = "table" ] && { [ "${FAKE_NFT_DELETE_RC:-0}" -ne 0 ] && exit "${FAKE_NFT_DELETE_RC}"; rm -f "$STORE"; exit 0; } ;;
 esac
 exit 0
 EOF

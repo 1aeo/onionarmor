@@ -48,13 +48,19 @@ fi
 # Use the persisted peer list from apply (if available) to check against the
 # actual deployed config, not just auto-detected peers (handles --peer-ip overrides).
 firewall_peers_file=$(bgp_firewall_peers_path)
+fw_owned=0
 if [ -e "$firewall_peers_file" ] && [ -s "$firewall_peers_file" ]; then
+  fw_owned=1
   peers=$(cat "$firewall_peers_file" 2>/dev/null || true)
 else
   peers=$(bgp_resolve_peers)
 fi
 cur=$(bgp_nft_current)
-if [ -z "$cur" ]; then
+if [ -z "$cur" ] && [ "$fw_owned" -eq 1 ]; then
+  # We previously applied the firewall (ownership marker present) but the managed
+  # table is gone — that's drift, not "not configured". Red.
+  bgp_check red "firewall tcp/179" "applied via --enable-firewall but the managed nft table inet $BGP_NFT_TABLE is gone — re-apply or revert"
+elif [ -z "$cur" ]; then
   bgp_check green "firewall tcp/179" "not configured (optional defense-in-depth; --enable-firewall to add)"
 elif ! printf '%s\n' "$cur" | grep -qE 'tcp dport 179 drop'; then
   bgp_check red "firewall tcp/179" "managed table present but missing the default tcp/179 drop"
