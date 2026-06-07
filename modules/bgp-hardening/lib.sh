@@ -346,10 +346,12 @@ bgp_render_gtsm_config() {
 # bgp_render_gtsm_removal <peer-hops-per-line-on-stdin>: remove ttl-security from peers.
 bgp_render_gtsm_removal() {
   local p hops
+  printf 'router bgp\n'
   while IFS=' ' read -r p hops; do
     [ -n "$p" ] || continue
-    printf 'no neighbor %s ttl-security hops %s\n' "$p" "$hops"
+    printf ' no neighbor %s ttl-security hops %s\n' "$p" "$hops"
   done
+  printf ' exit\n'
 }
 
 # bgp_vtysh_apply <config-lines-on-stdin>: feed config lines to vtysh inside a

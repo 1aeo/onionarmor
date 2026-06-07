@@ -36,17 +36,21 @@ fi
 
 # ---------------------------------------------------------------------------
 # 2. Remove the managed firewall rules (nftables; ufw is out of scope here).
-# Always attempted: the table only exists if apply was run with --enable-firewall.
+# Only if the module actually created it (check for the firewall.peers marker).
 # ---------------------------------------------------------------------------
-if [ -n "$(bgp_nft_current)" ]; then
-  "$ONIONARMOR_BGP_NFT" delete table inet "$BGP_NFT_TABLE" >/dev/null 2>&1 \
-    && { audit_log bgp.revert.firewall "removed=nft:$BGP_NFT_TABLE"; info "removed nft table inet $BGP_NFT_TABLE"; touched=1; } \
-    || warn "could not delete nft table inet $BGP_NFT_TABLE"
+firewall_peers_marker=$(bgp_firewall_peers_path)
+if [ -e "$firewall_peers_marker" ]; then
+  if [ -n "$(bgp_nft_current)" ]; then
+    "$ONIONARMOR_BGP_NFT" delete table inet "$BGP_NFT_TABLE" >/dev/null 2>&1 \
+      && { audit_log bgp.revert.firewall "removed=nft:$BGP_NFT_TABLE"; info "removed nft table inet $BGP_NFT_TABLE"; touched=1; } \
+      || warn "could not delete nft table inet $BGP_NFT_TABLE"
+  else
+    info "no managed nft table inet $BGP_NFT_TABLE to remove"
+  fi
+  rm -f "$firewall_peers_marker" 2>/dev/null || true
 else
-  info "no managed nft table inet $BGP_NFT_TABLE to remove"
+  info "firewall not managed by this module (no ownership marker) — leaving nft table inet $BGP_NFT_TABLE as-is"
 fi
-# Clean up the persisted firewall peers file
-rm -f "$(bgp_firewall_peers_path)" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # 3. Remove the FRR rpki cache + route-map; disable (but keep) the validator.
