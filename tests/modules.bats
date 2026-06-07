@@ -35,7 +35,7 @@ setup() {
   run "$BIN" list-modules
   [ "$status" -eq 0 ]
   [[ "$output" == *"bgp-hardening"* ]]
-  [[ "$output" == *"listener bind"* ]]
+  [[ "$output" == *"bgpd listener"* ]]
 }
 
 @test "apply --module bgp-hardening --dry-run: routes to the module" {
