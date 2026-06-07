@@ -34,7 +34,6 @@ fi
 # --- overridable external commands ----------------------------------------
 : "${ONIONARMOR_BGP_VTYSH:=vtysh}"
 : "${ONIONARMOR_BGP_NFT:=nft}"
-: "${ONIONARMOR_BGP_UFW:=ufw}"
 : "${ONIONARMOR_BGP_SYSTEMCTL:=systemctl}"
 : "${ONIONARMOR_BGP_SS:=ss}"
 : "${ONIONARMOR_BGP_APT:=apt-get}"
@@ -71,11 +70,13 @@ fi
 bgp_set_defaults() {
   BGP_BIND_IP=""          # empty => auto-detect from `bgp router-id`
   BGP_BIND_IP_SET=0
-  BGP_BIND_FIX=1          # --no-bind-fix => 0
+  BGP_BIND_FIX=1          # --no-bind-fix => 0 (listener bind is the headline)
   BGP_PEERS=""            # comma-joined; empty => auto-detect from neighbors
-  BGP_DO_FIREWALL=1       # --no-firewall => 0
-  BGP_FIREWALL="nftables" # or ufw
-  BGP_RPKI=1              # --no-enable-rpki => 0
+  BGP_DO_FIREWALL=0       # OFF by default; --enable-firewall => 1 (deferred work,
+                          # offered as opt-in defense-in-depth)
+  BGP_FIREWALL="nftables" # backend (nftables only; ufw deferred)
+  BGP_RPKI=0              # OFF by default; --enable-rpki => 1. Minimal value for a
+                          # single-homed stub AS (see README "When NOT to use RPKI").
   BGP_RPKI_SOURCES=""     # extra repo URLs, comma-joined
   BGP_RPKI_CACHE_HOST="$BGP_RPKI_CACHE_HOST_DEFAULT"
   BGP_RPKI_CACHE_PORT="$BGP_RPKI_CACHE_PORT_DEFAULT"
@@ -104,9 +105,8 @@ bgp_parse_flags() {
       --no-bind-fix)     BGP_BIND_FIX=0; shift ;;
       --peer-ip)         bgp_need_val "$1" "$#"; bgp_add_csv BGP_PEERS "$2"; shift 2 ;;
       --peer-ip=*)       bgp_add_csv BGP_PEERS "${1#--peer-ip=}"; shift ;;
-      --no-firewall)     BGP_DO_FIREWALL=0; shift ;;
-      --firewall)        bgp_need_val "$1" "$#"; BGP_FIREWALL=$2; shift 2 ;;
-      --firewall=*)      BGP_FIREWALL=${1#--firewall=}; shift ;;
+      --enable-firewall) BGP_DO_FIREWALL=1; shift ;;
+      --no-firewall)     BGP_DO_FIREWALL=0; shift ;;   # accepted (already the default)
       --enable-rpki)     BGP_RPKI=1; shift ;;
       --no-enable-rpki)  BGP_RPKI=0; shift ;;
       --rpki-source)     bgp_need_val "$1" "$#"; bgp_add_csv BGP_RPKI_SOURCES "$2"; shift 2 ;;
@@ -123,10 +123,6 @@ bgp_parse_flags() {
 }
 
 bgp_validate_flags() {
-  case "$BGP_FIREWALL" in
-    nftables|ufw) : ;;
-    *) die "bgp-hardening: --firewall must be 'nftables' or 'ufw': $BGP_FIREWALL" ;;
-  esac
   if [ "$BGP_GTSM" -eq 1 ]; then
     case "$BGP_GTSM_HOPS" in
       ""|*[!0-9]*) die "bgp-hardening: --enable-gtsm requires --gtsm-hops <N> (1-255)" ;;
@@ -156,20 +152,20 @@ bgp_usage() {
   cat <<'EOF'
 onionarmor apply --module bgp-hardening [options]   (also: audit, revert)
 
-Apply safe defaults to an FRR bgpd: bind the listener to a specific peer-facing
-IP, restrict tcp/179 to the known peer(s) at the firewall, validate inbound
-origins with RPKI (Routinator; drop INVALID, keep VALID+UNKNOWN), and optionally
-enable GTSM. Auto-detects from /etc/frr (bgp router-id, neighbor lines).
+Bind the FRR bgpd listener to a specific peer-facing IP (the default, headline
+fix). Firewall, RPKI, and GTSM are OPT-IN extras. Auto-detects from /etc/frr
+(bgp router-id, neighbor lines).
 
 OPTIONS
   --bind-ip <ip>          bgpd listener bind IP (default: auto from `bgp router-id`).
   --no-bind-fix           Skip the listener-bind step entirely.
   --peer-ip <ip>          Known peer IP(s); repeatable / comma-separated
                           (default: auto from `neighbor <ip> remote-as` lines).
-  --firewall <nftables|ufw>  Firewall to manage for tcp/179 (default: nftables).
-  --no-firewall           Skip the firewall step.
-  --enable-rpki           Install/use Routinator + validate inbound (default on).
-  --no-enable-rpki        Leave RPKI alone.
+  --enable-firewall       Restrict tcp/179 to the known peer(s) with nftables
+                          (default: OFF — deferred; offered as defense-in-depth).
+  --enable-rpki           Install/use Routinator + validate inbound (default OFF;
+                          minimal value for a single-homed stub AS — see README).
+  --no-enable-rpki        Leave RPKI alone (already the default).
   --rpki-source <url>     Extra RPKI repo URL; repeatable (default: the 5 RIRs).
   --enable-gtsm           Set `ttl-security hops <N>` per neighbor (peer must
                           cooperate); requires --gtsm-hops.
@@ -303,17 +299,6 @@ bgp_render_nft() {
 # bgp_nft_current: the live managed table as nft prints it, or empty.
 bgp_nft_current() {
   "$ONIONARMOR_BGP_NFT" list table inet "$BGP_NFT_TABLE" 2>/dev/null || true
-}
-
-# --- firewall: ufw (secondary) --------------------------------------------
-# bgp_render_ufw <peer-per-line-on-stdin>: emit the ufw commands we would run.
-bgp_render_ufw() {
-  local p
-  while IFS= read -r p; do
-    [ -n "$p" ] || continue
-    printf 'allow proto tcp from %s to any port 179\n' "$p"
-  done
-  printf 'deny proto tcp to any port 179\n'
 }
 
 # --- RPKI + route-map FRR config ------------------------------------------

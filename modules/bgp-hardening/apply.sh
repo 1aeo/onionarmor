@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# MODULE: BGP hardening — bind bgpd to a specific IP, firewall tcp/179 to known peers, RPKI-validate inbound, optional GTSM.
+# MODULE: BGP hardening — bind the FRR bgpd listener to a specific peer-facing IP; optional tcp/179 firewall, RPKI, GTSM.
 #
 # apply.sh — apply the FRR bgpd safe-defaults. Idempotent; supports --dry-run.
 # Auto-detects the bind IP (bgp router-id) and peers (neighbor remote-as lines)
@@ -29,7 +29,7 @@ if [ "$BGP_DO_FIREWALL" -eq 1 ] || [ "$BGP_GTSM" -eq 1 ]; then
   peers=$(bgp_resolve_peers)
   if [ -z "$peers" ]; then
     [ "$BGP_DO_FIREWALL" -eq 1 ] \
-      && die "bgp-hardening: no peer IPs — no 'neighbor <ip> remote-as' in $ONIONARMOR_BGP_FRR_CONF; pass --peer-ip <ip> (or --no-firewall)"
+      && die "bgp-hardening: --enable-firewall needs peers — no 'neighbor <ip> remote-as' in $ONIONARMOR_BGP_FRR_CONF; pass --peer-ip <ip>"
     [ "$BGP_GTSM" -eq 1 ] \
       && die "bgp-hardening: --enable-gtsm needs peers — none detected; pass --peer-ip <ip>"
   fi
@@ -47,8 +47,8 @@ if [ "$BGP_DRY_RUN" -eq 1 ]; then
 
 PLAN
   listener bind     -> $([ "$BGP_BIND_FIX" -eq 1 ] && echo "$bind_ip (in $dropin_daemons bgpd_options)" || echo "skipped (--no-bind-fix)")
-  firewall          -> $([ "$BGP_DO_FIREWALL" -eq 1 ] && echo "$BGP_FIREWALL: tcp/179 from { ${peer_list_oneline:-none} } only" || echo "skipped (--no-firewall)")
-  RPKI              -> $([ "$BGP_RPKI" -eq 1 ] && echo "Routinator + route-map $BGP_RPKI_ROUTEMAP (cache $BGP_RPKI_CACHE_HOST:$BGP_RPKI_CACHE_PORT)" || echo "skipped (--no-enable-rpki)")
+  firewall          -> $([ "$BGP_DO_FIREWALL" -eq 1 ] && echo "nftables: tcp/179 from { ${peer_list_oneline:-none} } only" || echo "off (opt-in: --enable-firewall)")
+  RPKI              -> $([ "$BGP_RPKI" -eq 1 ] && echo "Routinator + route-map $BGP_RPKI_ROUTEMAP (cache $BGP_RPKI_CACHE_HOST:$BGP_RPKI_CACHE_PORT)" || echo "off (opt-in: --enable-rpki; minimal value for a stub AS)")
   GTSM              -> $([ "$BGP_GTSM" -eq 1 ] && echo "ttl-security hops $BGP_GTSM_HOPS per neighbor" || echo "off (peer cooperation required)")
 EOF
   if [ "$BGP_BIND_FIX" -eq 1 ]; then
@@ -56,9 +56,8 @@ EOF
     bgp_render_daemons "$bind_ip" | grep -E '^bgpd_options=' || true
   fi
   if [ "$BGP_DO_FIREWALL" -eq 1 ]; then
-    printf '\n--- firewall (%s) ---\n' "$BGP_FIREWALL"
-    if [ "$BGP_FIREWALL" = "nftables" ]; then printf '%s\n' "$peers" | bgp_render_nft
-    else printf '%s\n' "$peers" | bgp_render_ufw; fi
+    printf '\n--- firewall (nftables) ---\n'
+    printf '%s\n' "$peers" | bgp_render_nft
   fi
   if [ "$BGP_RPKI" -eq 1 ]; then
     printf '\n--- FRR RPKI config (via vtysh) ---\n'; bgp_render_rpki_config
@@ -127,43 +126,22 @@ fi
 # ---------------------------------------------------------------------------
 # 2. Firewall: restrict tcp/179 to the known peer IP(s).
 # ---------------------------------------------------------------------------
+# Opt-in (--enable-firewall). nftables only; ufw is deferred for this PR.
 if [ "$BGP_DO_FIREWALL" -eq 1 ]; then
-  if [ "$BGP_FIREWALL" = "nftables" ]; then
-    rendered_nft=$(printf '%s\n' "$peers" | bgp_render_nft)
-    current_nft=$(bgp_nft_current)
-    # Normalize: extract only the table definition for comparison (skip comments, delete table)
-    rendered_normalized=$(printf '%s\n' "$rendered_nft" | sed -n '/^table inet/,/^}$/p' | grep -v '^delete table')
-    if [ "$current_nft" = "$rendered_normalized" ]; then
-      info "firewall already current: nft table inet $BGP_NFT_TABLE"
-    else
-      # Snapshot the existing managed table (if any) for revert/debugging.
-      bgp_nft_current > "$(bgp_nft_backup_path)" 2>/dev/null || true
-      printf '%s\n' "$rendered_nft" | "$ONIONARMOR_BGP_NFT" -f - \
-        || die "bgp-hardening: nft failed to load the tcp/179 ruleset"
-      audit_log bgp.apply.firewall "nft_table=$BGP_NFT_TABLE peers=$peer_list_oneline"
-      info "firewall: nft table inet $BGP_NFT_TABLE restricts tcp/179 to { $peer_list_oneline }"
-      any_changed=1
-    fi
+  rendered_nft=$(printf '%s\n' "$peers" | bgp_render_nft)
+  current_nft=$(bgp_nft_current)
+  # Normalize: extract only the table definition for comparison (skip comments, delete table)
+  rendered_normalized=$(printf '%s\n' "$rendered_nft" | sed -n '/^table inet/,/^}$/p' | grep -v '^delete table')
+  if [ "$current_nft" = "$rendered_normalized" ]; then
+    info "firewall already current: nft table inet $BGP_NFT_TABLE"
   else
-    # ufw path: check existing rules for idempotency.
-    ufw_changed=0
-    ufw_status=$("$ONIONARMOR_BGP_UFW" status numbered 2>/dev/null || true)
-    while IFS= read -r line; do
-      [ -n "$line" ] || continue
-      # Check if this rule already exists in the ufw status output
-      if ! printf '%s\n' "$ufw_status" | grep -qF "${line#* }"; then
-        # shellcheck disable=SC2086  # ufw args are a controlled, space-split command
-        "$ONIONARMOR_BGP_UFW" $line >/dev/null 2>&1 || warn "ufw command failed: $line"
-        ufw_changed=1
-      fi
-    done < <(printf '%s\n' "$peers" | bgp_render_ufw)
-    if [ "$ufw_changed" -eq 1 ]; then
-      audit_log bgp.apply.firewall "ufw peers=$peer_list_oneline"
-      info "firewall: ufw restricts tcp/179 to { $peer_list_oneline }"
-      any_changed=1
-    else
-      info "firewall already current: ufw tcp/179 rules"
-    fi
+    # Snapshot the existing managed table (if any) for revert/debugging.
+    bgp_nft_current > "$(bgp_nft_backup_path)" 2>/dev/null || true
+    printf '%s\n' "$rendered_nft" | "$ONIONARMOR_BGP_NFT" -f - \
+      || die "bgp-hardening: nft failed to load the tcp/179 ruleset"
+    audit_log bgp.apply.firewall "nft_table=$BGP_NFT_TABLE peers=$peer_list_oneline"
+    info "firewall: nft table inet $BGP_NFT_TABLE restricts tcp/179 to { $peer_list_oneline }"
+    any_changed=1
   fi
 fi
 

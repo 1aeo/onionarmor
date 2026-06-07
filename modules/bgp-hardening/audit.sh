@@ -3,10 +3,12 @@
 # never changes host state. Exits non-zero if ANY check is red.
 #
 # Checks:
-#   (a) bgpd listener is bound to a specific IP, not 0.0.0.0 / [::],
-#   (b) the firewall restricts tcp/179 to the known peer IP(s),
-#   (c) the RPKI validator is running locally and FRR is configured to query it,
+#   (a) bgpd listener is bound to a specific IP, not 0.0.0.0 / [::]  (REQUIRED),
+#   (b) IF the optional tcp/179 firewall is configured, it is sound (optional),
+#   (c) IF optional RPKI is configured, the validator is up + FRR queries it,
 #   (d) FRR is a current release (CVE awareness — advisory only).
+# Only (a) and a broken opted-in (b)/(c) are red. The single-homed stub-AS
+# default posture (listener bind only) is all-green.
 
 set -euo pipefail
 
@@ -40,49 +42,43 @@ else
   bgp_check green "listener bind" "bgpd bound to $bind (specific)"
 fi
 
-# --- (b) firewall restricts tcp/179 --------------------------------------
+# --- (b) firewall restricts tcp/179 (OPTIONAL defense-in-depth) ----------
+# The :179 firewall is opt-in (--enable-firewall), so its absence is fine —
+# never red. When it IS in place, validate it.
 peers=$(bgp_resolve_peers)
-if [ "$BGP_FIREWALL" = "nftables" ]; then
-  cur=$(bgp_nft_current)
-  if [ -z "$cur" ]; then
-    bgp_check red "firewall tcp/179" "no managed nft table inet $BGP_NFT_TABLE — run apply"
-  elif ! printf '%s\n' "$cur" | grep -qE 'tcp dport 179 drop'; then
-    bgp_check red "firewall tcp/179" "managed table present but missing the default tcp/179 drop"
-  else
-    # Every known peer must appear in the accept set; otherwise it's drift.
-    # If no peers are detected, that's a configuration problem.
-    if [ -z "$peers" ]; then
-      bgp_check yellow "firewall tcp/179" "drop in place, but no peers detected — may block all BGP"
-    else
-      missing=""
-      while IFS= read -r p; do
-        [ -n "$p" ] || continue
-        printf '%s\n' "$cur" | grep -qF "$p" || missing="$missing $p"
-      done <<EOF
+cur=$(bgp_nft_current)
+if [ -z "$cur" ]; then
+  bgp_check green "firewall tcp/179" "not configured (optional defense-in-depth; --enable-firewall to add)"
+elif ! printf '%s\n' "$cur" | grep -qE 'tcp dport 179 drop'; then
+  bgp_check red "firewall tcp/179" "managed table present but missing the default tcp/179 drop"
+elif [ -z "$peers" ]; then
+  bgp_check yellow "firewall tcp/179" "drop in place, but no peers detected — may block all BGP"
+else
+  missing=""
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    printf '%s\n' "$cur" | grep -qF "$p" || missing="$missing $p"
+  done <<EOF
 $peers
 EOF
-      if [ -n "$missing" ]; then
-        bgp_check yellow "firewall tcp/179" "drop in place, but known peer(s) not in accept set:$missing"
-      else
-        bgp_check green "firewall tcp/179" "tcp/179 restricted to known peer(s); default drop present"
-      fi
-    fi
-  fi
-else
-  if "$ONIONARMOR_BGP_UFW" status 2>/dev/null | grep -qE '179'; then
-    bgp_check green "firewall tcp/179" "ufw has tcp/179 rules"
+  if [ -n "$missing" ]; then
+    bgp_check yellow "firewall tcp/179" "drop in place, but known peer(s) not in accept set:$missing"
   else
-    bgp_check red "firewall tcp/179" "ufw has no tcp/179 rule — run apply"
+    bgp_check green "firewall tcp/179" "tcp/179 restricted to known peer(s); default drop present"
   fi
 fi
 
-# --- (c) RPKI validator running + FRR querying it ------------------------
+# --- (c) RPKI validation (OPTIONAL — minimal value for a stub AS) ---------
+# RPKI is opt-in (--enable-rpki). For a single-homed stub AS that doesn't forward
+# traffic, inbound RPKI changes no forwarding decision (every route resolves to
+# the one peer), so its absence is GREEN, never yellow. When it IS configured,
+# validate that the validator is actually up and FRR is querying it.
 marker=$(bgp_rpki_marker_path)
 rpki_running=0
 bgp_service_active routinator && rpki_running=1
 frr_rpki=$("$ONIONARMOR_BGP_VTYSH" -c "show rpki cache" 2>/dev/null || true)
 if [ ! -e "$marker" ]; then
-  bgp_check yellow "RPKI validation" "not configured by this module (run apply, or --no-enable-rpki)"
+  bgp_check green "RPKI validation" "not configured (optional; minimal value for a single-homed stub AS — see README)"
 elif [ "$rpki_running" -ne 1 ]; then
   bgp_check red "RPKI validation" "FRR configured for RPKI but routinator is not active"
 elif printf '%s\n' "$frr_rpki" | grep -qE "$BGP_RPKI_CACHE_HOST|rpki"; then

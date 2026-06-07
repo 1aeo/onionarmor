@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
-# bgp-hardening apply.sh — listener bind, peer auto-detect, firewall, RPKI,
-# GTSM, idempotency, and dry-run.
+# bgp-hardening apply.sh — listener bind (default), opt-in firewall/RPKI/GTSM,
+# idempotency, and dry-run.
 
 load test_helper
 
@@ -19,15 +19,43 @@ daemons_options() {
   run bash "$APPLY"
   [ "$status" -eq 0 ]
   [[ "$(daemons_options)" == *"-l 1.2.3.4"* ]]
-  # FRR was gracefully reloaded for the daemons change.
-  grep -q 'reload frr' "$STUB_STATE/systemctl.log"
+  # A bgpd_options (-l) change requires a restart, not a reload, to take effect.
+  grep -q 'restart frr' "$STUB_STATE/systemctl.log"
   # ss now reports the specific-IP listener.
   "$ONIONARMOR_BGP_SS" -ltnH | grep -q '1.2.3.4:179'
 }
 
+@test "test_apply_does_not_install_rpki_by_default" {
+  # RPKI is opt-in: a default apply must NOT install/enable the validator.
+  seed_frr 1.2.3.4 192.0.2.1
+  run bash "$APPLY"
+  [ "$status" -eq 0 ]
+  [ ! -s "$STUB_APT_LOG" ]                               # no apt install
+  [ ! -e "$ONIONARMOR_BGP_STATE_DIR/rpki.applied" ]      # no FRR rpki config
+  ! grep -q 'enable.*routinator' "$STUB_STATE/systemctl.log"
+  ! grep -q 'ONIONARMOR-RPKI-IN' "$STUB_VTYSH_LOG"
+}
+
+@test "test_apply_installs_rpki_when_flagged" {
+  seed_frr 1.2.3.4 192.0.2.1
+  run bash "$APPLY" --enable-rpki
+  [ "$status" -eq 0 ]
+  grep -q 'install' "$STUB_APT_LOG"                      # routinator installed
+  [ -e "$ONIONARMOR_BGP_STATE_DIR/rpki.applied" ]        # FRR rpki configured
+  grep -q 'ONIONARMOR-RPKI-IN' "$STUB_VTYSH_LOG"
+}
+
+@test "test_apply_does_not_install_firewall_by_default" {
+  # Firewall is opt-in (--enable-firewall): a default apply leaves :179 alone.
+  seed_frr 1.2.3.4 192.0.2.1
+  run bash "$APPLY"
+  [ "$status" -eq 0 ]
+  [ ! -s "$NFT_STORE" ]
+}
+
 @test "test_apply_auto_detects_peer_from_neighbor" {
   seed_frr 10.0.0.9 203.0.113.7
-  run bash "$APPLY"
+  run bash "$APPLY" --enable-firewall
   [ "$status" -eq 0 ]
   # The neighbor IP was auto-detected and placed in the firewall accept set.
   "$ONIONARMOR_BGP_NFT" list table inet onionarmor_bgp | grep -q '203.0.113.7'
@@ -36,16 +64,16 @@ daemons_options() {
 
 @test "test_apply_installs_firewall_rule" {
   seed_frr 1.2.3.4 192.0.2.1
-  run bash "$APPLY"
+  run bash "$APPLY" --enable-firewall
   [ "$status" -eq 0 ]
   rules="$("$ONIONARMOR_BGP_NFT" list table inet onionarmor_bgp)"
   [[ "$rules" == *"tcp dport 179 ip saddr { 192.0.2.1 } accept"* ]]
   [[ "$rules" == *"tcp dport 179 drop"* ]]
 }
 
-@test "apply: --peer-ip overrides auto-detect (comma + repeat)" {
+@test "apply: --enable-firewall --peer-ip overrides auto-detect (comma + repeat)" {
   seed_frr 1.2.3.4 10.10.10.10
-  run bash "$APPLY" --peer-ip 192.0.2.1,198.51.100.1 --peer-ip 198.51.100.2
+  run bash "$APPLY" --enable-firewall --peer-ip 192.0.2.1,198.51.100.1 --peer-ip 198.51.100.2
   [ "$status" -eq 0 ]
   rules="$("$ONIONARMOR_BGP_NFT" list table inet onionarmor_bgp)"
   [[ "$rules" == *"192.0.2.1"* ]]
@@ -55,9 +83,9 @@ daemons_options() {
   ! [[ "$rules" == *"10.10.10.10"* ]]
 }
 
-@test "apply: keeps the full feed — never emits DEFAULT_ONLY_IN" {
+@test "apply --enable-rpki: keeps the full feed — never emits DEFAULT_ONLY_IN" {
   seed_frr 1.2.3.4 192.0.2.1
-  run bash "$APPLY"
+  run bash "$APPLY" --enable-rpki
   [ "$status" -eq 0 ]
   ! grep -q 'DEFAULT_ONLY_IN' "$STUB_VTYSH_LOG"
   # RPKI route-map is the deny-invalid/permit-rest kind, applied via vtysh.
@@ -66,31 +94,31 @@ daemons_options() {
 
 @test "test_apply_idempotent" {
   seed_frr 1.2.3.4 192.0.2.1
-  bash "$APPLY" >/dev/null
-  : > "$STUB_STATE/systemctl.log"   # forget the first run's reload
-  run bash "$APPLY"
+  bash "$APPLY" --enable-firewall --enable-rpki >/dev/null
+  : > "$STUB_STATE/systemctl.log"   # forget the first run's restart/reload
+  run bash "$APPLY" --enable-firewall --enable-rpki
   [ "$status" -eq 0 ]
   [[ "$output" == *"already current"* ]]
   [[ "$output" == *"already configured"* || "$output" == *"already running"* ]]
-  # Nothing FRR-affecting changed -> no second reload.
-  ! grep -q 'reload frr' "$STUB_STATE/systemctl.log"
+  # Nothing FRR-affecting changed -> no second restart/reload.
+  ! grep -qE 'restart frr|reload frr' "$STUB_STATE/systemctl.log"
 }
 
 @test "test_apply_dry_run_no_state_change" {
   seed_frr 1.2.3.4 192.0.2.1
-  run bash "$APPLY" --dry-run
+  run bash "$APPLY" --enable-firewall --enable-rpki --dry-run
   [ "$status" -eq 0 ]
   [[ "$output" == *"dry-run: bgp-hardening"* ]]
-  # daemons untouched (no -l), no nft table, FRR not reloaded.
+  # daemons untouched (no -l), no nft table, FRR not restarted/reloaded.
   ! [[ "$(daemons_options)" == *"-l "* ]]
   [ ! -s "$NFT_STORE" ]
-  [ ! -f "$STUB_STATE/systemctl.log" ] || ! grep -q 'reload frr' "$STUB_STATE/systemctl.log"
+  [ ! -f "$STUB_STATE/systemctl.log" ] || ! grep -qE 'restart frr|reload frr' "$STUB_STATE/systemctl.log"
 }
 
 @test "test_rpki_validator_install_idempotent" {
   seed_frr 1.2.3.4 192.0.2.1
-  bash "$APPLY" >/dev/null
-  bash "$APPLY" >/dev/null
+  bash "$APPLY" --enable-rpki >/dev/null
+  bash "$APPLY" --enable-rpki >/dev/null
   # routinator was apt-installed exactly once (second run saw it active).
   [ "$(grep -c 'install' "$STUB_APT_LOG")" -eq 1 ]
 }
@@ -119,14 +147,22 @@ daemons_options() {
   [[ "$output" == *"could not determine the listener bind IP"* ]]
 }
 
-@test "apply: --no-bind-fix --no-enable-rpki only manages the firewall" {
+@test "apply: --no-bind-fix --enable-firewall manages only the firewall" {
   seed_frr 1.2.3.4 192.0.2.1
-  run bash "$APPLY" --no-bind-fix --no-enable-rpki
+  run bash "$APPLY" --no-bind-fix --enable-firewall
   [ "$status" -eq 0 ]
   # daemons untouched, firewall present, no routinator install.
   ! [[ "$(daemons_options)" == *"-l "* ]]
   [ -s "$NFT_STORE" ]
   [ ! -s "$STUB_APT_LOG" ]
+}
+
+@test "test_README_documents_stub_AS_caveat" {
+  # Sanity-check that the doc still carries the stub-AS RPKI caveat.
+  grep -q 'When NOT to use RPKI' "$MOD_ROOT/README.md"
+  grep -q 'single-homed stub AS' "$MOD_ROOT/README.md"
+  grep -q 'no ip forwarding' "$MOD_ROOT/README.md"
+  grep -q 'Use `--enable-rpki` only if your topology genuinely benefits' "$MOD_ROOT/README.md"
 }
 
 @test "apply: writes audit-log entries" {
@@ -135,6 +171,5 @@ daemons_options() {
   [ "$status" -eq 0 ]
   grep -q 'bgp.apply.start' "$ONIONARMOR_AUDIT_LOG"
   grep -q 'bgp.apply.bind' "$ONIONARMOR_AUDIT_LOG"
-  grep -q 'bgp.apply.firewall' "$ONIONARMOR_AUDIT_LOG"
   grep -q 'bgp.apply.done' "$ONIONARMOR_AUDIT_LOG"
 }

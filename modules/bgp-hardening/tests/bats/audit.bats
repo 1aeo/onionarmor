@@ -1,5 +1,6 @@
 #!/usr/bin/env bats
-# bgp-hardening audit.sh — green/yellow/red checks + exit codes.
+# bgp-hardening audit.sh — green/yellow/red checks + exit codes. Listener bind
+# is the only hard requirement; firewall + RPKI are optional (green when absent).
 
 load test_helper
 
@@ -28,9 +29,24 @@ load test_helper
   [[ "$output" == *"bgpd bound to 1.2.3.4 (specific)"* ]]
 }
 
-@test "audit: all green after a clean apply" {
+@test "test_audit_does_not_yellow_on_missing_rpki" {
+  # Default (stub-AS) posture: listener bind only, no firewall, no RPKI.
+  # Audit must be ALL GREEN — optional controls being absent is not a warning.
   seed_frr 1.2.3.4 192.0.2.1
-  bash "$APPLY" >/dev/null
+  bash "$APPLY" >/dev/null            # default apply: listener bind only
+  run bash "$AUDIT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[ ok ] listener bind"* ]]
+  [[ "$output" == *"[ ok ] firewall tcp/179"* ]]
+  [[ "$output" == *"[ ok ] RPKI validation"* ]]
+  [[ "$output" == *"all green"* ]]
+  ! [[ "$output" == *"[warn]"* ]]
+  ! [[ "$output" == *"[FAIL]"* ]]
+}
+
+@test "audit: all green after a full opt-in apply (bind + firewall + rpki)" {
+  seed_frr 1.2.3.4 192.0.2.1
+  bash "$APPLY" --enable-firewall --enable-rpki >/dev/null
   run bash "$AUDIT"
   [ "$status" -eq 0 ]
   [[ "$output" == *"[ ok ] listener bind"* ]]
@@ -40,31 +56,34 @@ load test_helper
   ! [[ "$output" == *"[FAIL]"* ]]
 }
 
-@test "audit: red when the firewall has no managed tcp/179 table" {
+@test "audit: absent firewall is green (optional defense-in-depth, not red)" {
+  seed_frr 1.2.3.4 192.0.2.1
+  seed_daemons 1.2.3.4               # specific bind, but no firewall applied
+  run bash "$AUDIT"
+  [[ "$output" == *"[ ok ] firewall tcp/179"* ]]
+  [[ "$output" == *"not configured (optional"* ]]
+  ! [[ "$output" == *"[FAIL] firewall"* ]]
+}
+
+@test "audit: opted-in firewall missing its default drop is red" {
+  # A configured-but-broken firewall (operator opted in) is still a failure.
   seed_frr 1.2.3.4 192.0.2.1
   seed_daemons 1.2.3.4
+  printf 'table inet onionarmor_bgp {\n    chain input {\n        tcp dport 179 ip saddr { 1.1.1.1 } accept\n    }\n}\n' > "$NFT_STORE"
   run bash "$AUDIT"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"firewall tcp/179"* ]]
-  [[ "$output" == *"no managed nft table"* ]]
+  [[ "$output" == *"missing the default tcp/179 drop"* ]]
 }
 
 @test "audit: RPKI red when configured but routinator is down" {
   seed_frr 1.2.3.4 192.0.2.1
-  bash "$APPLY" >/dev/null
+  bash "$APPLY" --enable-rpki >/dev/null
   # Validator goes away after apply configured FRR for it.
   printf 'inactive\n' > "$STUB_STATE/active/routinator"
   run bash "$AUDIT"
   [ "$status" -eq 1 ]
   [[ "$output" == *"RPKI validation"* ]]
   [[ "$output" == *"routinator is not active"* ]]
-}
-
-@test "audit: RPKI yellow when not configured by this module" {
-  seed_frr 1.2.3.4 192.0.2.1
-  seed_daemons 1.2.3.4
-  run bash "$AUDIT"
-  [[ "$output" == *"not configured by this module"* ]]
 }
 
 @test "audit: FRR version on the advisory list is yellow, not red" {

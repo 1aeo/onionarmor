@@ -35,25 +35,15 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 2. Remove the managed firewall rules.
+# 2. Remove the managed firewall rules (nftables; ufw is out of scope here).
+# Always attempted: the table only exists if apply was run with --enable-firewall.
 # ---------------------------------------------------------------------------
-if [ "$BGP_FIREWALL" = "nftables" ]; then
-  if [ -n "$(bgp_nft_current)" ]; then
-    "$ONIONARMOR_BGP_NFT" delete table inet "$BGP_NFT_TABLE" >/dev/null 2>&1 \
-      && { audit_log bgp.revert.firewall "removed=nft:$BGP_NFT_TABLE"; info "removed nft table inet $BGP_NFT_TABLE"; touched=1; } \
-      || warn "could not delete nft table inet $BGP_NFT_TABLE"
-  else
-    info "no managed nft table inet $BGP_NFT_TABLE to remove"
-  fi
+if [ -n "$(bgp_nft_current)" ]; then
+  "$ONIONARMOR_BGP_NFT" delete table inet "$BGP_NFT_TABLE" >/dev/null 2>&1 \
+    && { audit_log bgp.revert.firewall "removed=nft:$BGP_NFT_TABLE"; info "removed nft table inet $BGP_NFT_TABLE"; touched=1; } \
+    || warn "could not delete nft table inet $BGP_NFT_TABLE"
 else
-  # ufw: best-effort delete of the rules apply would have added.
-  peers=$(bgp_resolve_peers)
-  while IFS= read -r line; do
-    [ -n "$line" ] || continue
-    # shellcheck disable=SC2086  # controlled, space-split ufw delete command
-    "$ONIONARMOR_BGP_UFW" delete $line >/dev/null 2>&1 || true
-  done < <(printf '%s\n' "$peers" | bgp_render_ufw)
-  info "removed ufw tcp/179 rules (best-effort)"
+  info "no managed nft table inet $BGP_NFT_TABLE to remove"
 fi
 
 # ---------------------------------------------------------------------------

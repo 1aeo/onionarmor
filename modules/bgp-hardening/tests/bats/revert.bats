@@ -26,7 +26,7 @@ daemons_options() {
 
 @test "revert: removes the managed nft table" {
   seed_frr 1.2.3.4 192.0.2.1
-  bash "$APPLY" >/dev/null
+  bash "$APPLY" --enable-firewall >/dev/null
   [ -s "$NFT_STORE" ]
   run bash "$REVERT"
   [ "$status" -eq 0 ]
@@ -36,8 +36,8 @@ daemons_options() {
 
 @test "revert: disables routinator but leaves it installed" {
   seed_frr 1.2.3.4 192.0.2.1
-  bash "$APPLY" >/dev/null
-  [ -x "$ONIONARMOR_BGP_ROUTINATOR" ]               # installed by apply
+  bash "$APPLY" --enable-rpki >/dev/null
+  [ -x "$ONIONARMOR_BGP_ROUTINATOR" ]               # installed by apply --enable-rpki
   run bash "$REVERT"
   [ "$status" -eq 0 ]
   grep -q 'disable routinator now=1' "$STUB_STATE/systemctl.log"
@@ -46,9 +46,18 @@ daemons_options() {
   [ -x "$ONIONARMOR_BGP_ROUTINATOR" ]
 }
 
-@test "revert: removes the FRR rpki route-map + marker" {
+@test "revert: does not touch routinator when RPKI was never enabled" {
+  # Default apply never enabled the validator -> revert must not disable it.
   seed_frr 1.2.3.4 192.0.2.1
   bash "$APPLY" >/dev/null
+  run bash "$REVERT"
+  [ "$status" -eq 0 ]
+  ! grep -q 'disable routinator' "$STUB_STATE/systemctl.log"
+}
+
+@test "revert: removes the FRR rpki route-map + marker" {
+  seed_frr 1.2.3.4 192.0.2.1
+  bash "$APPLY" --enable-rpki >/dev/null
   [ -e "$ONIONARMOR_BGP_STATE_DIR/rpki.applied" ]
   : > "$STUB_VTYSH_LOG"
   run bash "$REVERT"

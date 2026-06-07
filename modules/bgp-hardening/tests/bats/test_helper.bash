@@ -1,7 +1,7 @@
 # Test helper for the bgp-hardening module bats suite.
 #
 # Builds a throwaway sandbox with stub binaries for every external command the
-# module touches (vtysh, nft, systemctl, ss, apt-get, ufw) plus sandbox FRR
+# module touches (vtysh, nft, systemctl, ss, apt-get) plus sandbox FRR
 # config files (daemons, frr.conf). Fully offline; never touches the real host.
 # Uses mktemp -d (not $BATS_TEST_TMPDIR) for ubuntu-22.04 bats compatibility.
 
@@ -33,14 +33,12 @@ setup() {
   export STUB_VTYSH_LOG="$SB/vtysh.log"
   export STUB_NFT_LOG="$SB/nft.log"
   export STUB_APT_LOG="$SB/apt.log"
-  export STUB_UFW_LOG="$SB/ufw.log"
-  : > "$STUB_VTYSH_LOG"; : > "$STUB_NFT_LOG"; : > "$STUB_APT_LOG"; : > "$STUB_UFW_LOG"
+  : > "$STUB_VTYSH_LOG"; : > "$STUB_NFT_LOG"; : > "$STUB_APT_LOG"
   export FAKE_FRR_VERSION="10.3.0"           # current (>= min 10.2, not flagged)
 
   _build_stubs
   export ONIONARMOR_BGP_VTYSH="$STUB/vtysh"
   export ONIONARMOR_BGP_NFT="$STUB/nft"
-  export ONIONARMOR_BGP_UFW="$STUB/ufw"
   export ONIONARMOR_BGP_SYSTEMCTL="$STUB/systemctl"
   export ONIONARMOR_BGP_SS="$STUB/ss"
   export ONIONARMOR_BGP_APT="$STUB/apt-get"
@@ -180,14 +178,6 @@ case "$*" in
     printf '#!/bin/sh\nexit 0\n' > "$ONIONARMOR_BGP_ROUTINATOR"
     chmod +x "$ONIONARMOR_BGP_ROUTINATOR" ;;
 esac
-exit 0
-EOF
-
-  # ufw: log; `status` prints managed rules from a marker.
-  cat > "$STUB/ufw" <<'EOF'
-#!/bin/sh
-printf '%s\n' "$*" >> "${STUB_UFW_LOG:-/dev/null}"
-[ "$1" = "status" ] && cat "${STUB_UFW_LOG:-/dev/null}" 2>/dev/null
 exit 0
 EOF
 
