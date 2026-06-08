@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# check-own-roa-status — report the RPKI validity of the prefixes YOU announce.
+#
+# For a single-homed stub AS, validating *inbound* routes with RPKI buys little
+# (every route resolves to the one peer — see modules/bgp-hardening/README.md
+# "When NOT to use RPKI"). The genuinely useful RPKI action for such operators is
+# the OPPOSITE direction: publish ROAs for your OWN announced prefixes so that
+# *other* networks doing RPKI don't drop your legitimate announcements.
+#
+# This helper queries a public RPKI validator (RIPE Stat by default) for the
+# validity of your origin AS + prefixes and prints VALID / INVALID / UNKNOWN.
+# It is an OPERATOR (RIR / IP-holder) action — it is never invoked by
+# `onionarmor apply`/`audit`; run it explicitly.
+#
+# Exit status: 0 if every prefix is VALID, 1 if any is INVALID, 2 on
+# UNKNOWN/lookup-error (so it is safe to wire into a cron check).
+
+set -euo pipefail
+
+# --- defaults: the 1aeo fleet's announced prefixes (origin AS64512) ---------
+# Confirmed RPKI-VALID (max_length 24) — kept here so a bare run reports the
+# fleet's own healthy state.
+DEFAULT_ASN="64512"
+DEFAULT_PREFIXES="192.0.2.0/24 192.0.2.0/24 192.0.2.0/24 192.0.2.0/24"
+
+# --- overridable knobs (tests stub the fetch) ------------------------------
+: "${ONIONARMOR_ROA_CURL:=curl}"
+: "${ONIONARMOR_ROA_API:=https://stat.ripe.net/data/rpki-validation/data.json}"
+# ONIONARMOR_ROA_FETCH_CMD: optional override called as `<cmd> <asn> <prefix>`;
+# must print one of: valid | invalid | unknown. Used by the test suite to stay
+# offline. When unset, RIPE Stat is queried over HTTPS.
+
+usage() {
+  cat <<'EOF'
+check-own-roa-status — report RPKI validity of YOUR announced prefixes.
+
+USAGE
+  check-own-roa-status [--asn <N>] [--prefix <cidr>]...
+  check-own-roa-status                      # defaults to the 1aeo fleet set
+
+OPTIONS
+  --asn <N>          Origin AS number (default: 64512, the 1aeo fleet).
+  --prefix <cidr>    A prefix you announce; repeatable. If none are given, the
+                     four 1aeo fleet /24s are checked.
+  --api <url>        RPKI-validation API base (default: RIPE Stat).
+  -h, --help         This help.
+
+Publishing ROAs is done at your RIR / IP-holder portal, NOT on the host. This
+tool only *reports*; it changes nothing.
+EOF
+}
+
+# need_val <flag> <count>: a value-taking flag must be followed by a value, else
+# `shift 2` would emit a cryptic "shift count out of range".
+need_val() { [ "$2" -ge 2 ] || { printf 'check-own-roa-status: %s requires a value\n' "$1" >&2; exit 64; }; }
+
+asn="$DEFAULT_ASN"
+prefixes=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --asn)      need_val "$1" "$#"; asn=$2; shift 2 ;;
+    --asn=*)    asn=${1#--asn=}; shift ;;
+    --prefix)   need_val "$1" "$#"; prefixes="$prefixes $2"; shift 2 ;;
+    --prefix=*) prefixes="$prefixes ${1#--prefix=}"; shift ;;
+    --api)      need_val "$1" "$#"; ONIONARMOR_ROA_API=$2; shift 2 ;;
+    --api=*)    ONIONARMOR_ROA_API=${1#--api=}; shift ;;
+    -h|--help)  usage; exit 0 ;;
+    *)          printf 'check-own-roa-status: unknown argument: %s\n' "$1" >&2; exit 64 ;;
+  esac
+done
+[ -n "$(printf '%s' "$prefixes" | tr -d ' ')" ] || prefixes="$DEFAULT_PREFIXES"
+
+# roa_status <asn> <prefix>: print valid|invalid|unknown|error for one prefix.
+roa_status() {
+  local a=$1 p=$2 json status
+  if [ -n "${ONIONARMOR_ROA_FETCH_CMD:-}" ]; then
+    status=$("$ONIONARMOR_ROA_FETCH_CMD" "$a" "$p" 2>/dev/null || true)
+  else
+    json=$("$ONIONARMOR_ROA_CURL" -fsS --max-time 15 \
+             "$ONIONARMOR_ROA_API?resource=AS$a&prefix=$p" 2>/dev/null || true)
+    # RIPE Stat returns {"data":{"status":"valid|invalid|unknown", ...}}
+    status=$(printf '%s' "$json" | sed -n 's/.*"status"[[:space:]]*:[[:space:]]*"\([a-z_]*\)".*/\1/p' | head -1)
+  fi
+  case "$status" in
+    valid|invalid|unknown) printf '%s\n' "$status" ;;
+    *)                     printf 'error\n' ;;
+  esac
+}
+
+if [ -n "${ONIONARMOR_ROA_FETCH_CMD:-}" ]; then src="local validator ($ONIONARMOR_ROA_FETCH_CMD)"; else src="$ONIONARMOR_ROA_API"; fi
+printf 'RPKI status of announced prefixes (origin AS%s) via %s\n\n' "$asn" "$src"
+printf '%-20s %s\n' "PREFIX" "STATUS"
+printf '%-20s %s\n' "--------------------" "------"
+
+total=0 invalid=0 other=0
+# shellcheck disable=SC2086  # $prefixes is an intentional space-separated list
+for p in $prefixes; do
+  [ -n "$p" ] || continue
+  total=$((total + 1))
+  st=$(roa_status "$asn" "$p")
+  case "$st" in
+    valid)   : ;;
+    invalid) invalid=$((invalid + 1)) ;;
+    *)       other=$((other + 1)) ;;
+  esac
+  printf '%-20s %s\n' "$p" "$(printf '%s' "$st" | tr '[:lower:]' '[:upper:]')"
+done
+
+printf '\n'
+if [ "$invalid" -gt 0 ]; then
+  printf 'FAIL: %d/%d prefix(es) RPKI-INVALID — fix your ROAs at your RIR portal.\n' "$invalid" "$total" >&2
+  exit 1
+elif [ "$other" -gt 0 ]; then
+  printf 'WARN: %d/%d prefix(es) UNKNOWN/unreachable — check ROA coverage or network.\n' "$other" "$total" >&2
+  exit 2
+else
+  printf 'OK: all %d announced prefix(es) are RPKI-VALID. No action needed.\n' "$total"
+  exit 0
+fi

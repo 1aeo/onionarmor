@@ -39,5 +39,5 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: Lint bin/onionarmor + lib/* + install.sh + modules
         run: |
-          shellcheck --severity=warning bin/onionarmor lib/*.sh install.sh tests/fixtures/fake-sysctl \
+          shellcheck --severity=warning bin/onionarmor bin/check-own-roa-status lib/*.sh install.sh tests/fixtures/fake-sysctl \
             modules/*/*.sh
