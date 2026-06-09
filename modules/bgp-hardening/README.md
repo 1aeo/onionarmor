@@ -21,8 +21,8 @@ and every default is overridable.
 
 ## The audit context (why this module exists)
 
-onionwarden's BGP posture check found, across **relay-host-3 / relay-host-5 /
-relay-host-6**:
+onionwarden's BGP posture check found, across **relay-guard-1 / relay-mid-1 /
+relay-mid-2**:
 
 - `bgpd` listening on **`0.0.0.0:179`** (any interface) on every host, and
 - no firewall restriction on `tcp/179`.
@@ -174,16 +174,15 @@ RPKI status of announced prefixes (origin AS64512) via https://stat.ripe.net/dat
 PREFIX               STATUS
 -------------------- ------
 192.0.2.0/24         VALID
-192.0.2.0/24        VALID
-192.0.2.0/24        VALID
-192.0.2.0/24         VALID
+198.51.100.0/24      VALID
+203.0.113.0/24       VALID
 
-OK: all 4 announced prefix(es) are RPKI-VALID. No action needed.
+OK: all 3 announced prefix(es) are RPKI-VALID. No action needed.
 ```
 
-The **1aeo fleet is already RPKI-compliant** — all four announced /24s
-(`192.0.2.0/24`, `192.0.2.0/24`, `192.0.2.0/24`, `192.0.2.0/24`, origin
-AS64512, max-length 24) validate as **VALID**, so this helper has nothing to flag
+The **1aeo fleet is already RPKI-compliant** — every announced /24
+(`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`, origin AS64512,
+max-length 24) validates as **VALID**, so this helper has nothing to flag
 for the fleet. It exists for other operators (and to catch future ROA drift).
 
 **Does _not_ defend against / out of scope (by operator constraint):**
