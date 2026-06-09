@@ -92,11 +92,18 @@ sh_set_defaults() {
   SH_NO_RESTART=0        # write drop-ins but do not daemon-reload/restart
 }
 
+# sh_need_val <flag> <count>: die unless a value-taking flag was given an
+# argument, guarding `shift 2` from a silent "shift count out of range" abort on
+# a trailing valueless flag. Mirrors krp_need_val / bgp_need_val / dns_need_val.
+sh_need_val() {
+  [ "$2" -ge 2 ] || die "systemd-hardening: $1 requires a value (try --help)"
+}
+
 sh_parse_flags() {
   sh_set_defaults
   while [ $# -gt 0 ]; do
     case "$1" in
-      --units)      SH_UNITS_OVERRIDE=${2:-}; shift 2 ;;
+      --units)      sh_need_val "$1" "$#"; SH_UNITS_OVERRIDE=$2; shift 2 ;;
       --units=*)    SH_UNITS_OVERRIDE=${1#--units=}; shift ;;
       --dry-run)    SH_DRY_RUN=1; shift ;;
       --no-restart) SH_NO_RESTART=1; shift ;;

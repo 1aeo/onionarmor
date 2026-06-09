@@ -43,6 +43,21 @@ printf '\n'
 UNITS=()
 while IFS= read -r _u; do [ -n "$_u" ] && UNITS+=("$_u"); done < <(sh_detect_units)
 if [ "${#UNITS[@]}" -eq 0 ]; then
+  # No units autodetected — scan for leftover drop-ins (mirror revert's discovery).
+  leftover=()
+  for d in "$ONIONARMOR_SH_DROPIN_ROOT"/*.d; do
+    [ -d "$d" ] || continue
+    path="$d/$ONIONARMOR_SH_DROPIN_NAME"
+    sh_is_managed_dropin "$path" || continue
+    base=$(basename "$d")
+    leftover+=("${base%.d}")
+  done
+  if [ "${#leftover[@]}" -gt 0 ]; then
+    sh_check red "managed units" "none autodetected, but ${#leftover[@]} leftover drop-in(s) present: ${leftover[*]}"
+    printf '\n'
+    warn "audit: RED — leftover drop-ins exist for units no longer autodetected; run revert to clean up"
+    exit 1
+  fi
   sh_check yellow "managed units" "none present (tor@*/onionwarden/onionleak-*) — nothing to audit"
   printf '\n'
   info "audit: green/yellow — no managed units on this host"

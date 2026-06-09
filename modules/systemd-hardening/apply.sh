@@ -50,16 +50,20 @@ mkdir -p "$ONIONARMOR_SH_STATE_DIR" || die "cannot create state dir $ONIONARMOR_
 
 # ---------------------------------------------------------------------------
 # 1. Write each unit's drop-in (idempotent: skip if byte-identical). Collect the
-#    units whose drop-in actually changed — only those get restarted.
+#    units whose drop-in actually changed AND units with existing managed drop-ins
+#    that need activation — if a prior run used --no-restart, drop-ins exist but
+#    were never loaded, so a normal apply must reload + restart them.
 # ---------------------------------------------------------------------------
 changed=()
 skipped=()
+needs_restart=()
 for u in "${UNITS[@]}"; do
   dir=$(sh_dropin_dir "$u")
   path=$(sh_dropin_path "$u")
   rendered=$(sh_render_dropin "$u")
   if [ -f "$path" ] && [ "$(cat "$path")" = "$rendered" ]; then
     info "drop-in already current: $path"
+    needs_restart+=("$u")
     continue
   fi
   if [ -f "$path" ] && ! sh_is_managed_dropin "$path"; then
@@ -75,6 +79,7 @@ for u in "${UNITS[@]}"; do
   audit_log sh.apply.dropin "wrote=$path unit=$u"
   info "wrote drop-in: $path"
   changed+=("$u")
+  needs_restart+=("$u")
 done
 
 # ---------------------------------------------------------------------------
@@ -84,11 +89,11 @@ done
 if [ "$SH_NO_RESTART" -eq 1 ]; then
   audit_log sh.apply.done "no_restart=1 changed=${changed[*]:-none}"
   warn "--no-restart: drop-ins written but units NOT restarted; the auto-revert safety net is DISABLED"
-  warn "restart the affected units yourself and confirm they come up: ${changed[*]:-none}"
+  warn "restart the affected units yourself and confirm they come up: ${needs_restart[*]:-none}"
   exit 0
 fi
 
-if [ "${#changed[@]}" -eq 0 ]; then
+if [ "${#needs_restart[@]}" -eq 0 ]; then
   audit_log sh.apply.done "changed=none skipped=${skipped[*]:-none}"
   if [ "${#skipped[@]}" -gt 0 ]; then
     info "no changes: ${#skipped[@]} unit(s) skipped due to foreign drop-ins"
@@ -101,14 +106,14 @@ if [ "${#changed[@]}" -eq 0 ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 3. daemon-reload once, then restart ONLY the changed units. After each
+# 3. daemon-reload once, then restart units that need activation. After each
 #    restart, wait up to 30s for the unit to be active; auto-revert on failure.
 # ---------------------------------------------------------------------------
 "$ONIONARMOR_SH_SYSTEMCTL" daemon-reload >/dev/null 2>&1 \
   || warn "systemctl daemon-reload returned nonzero (continuing)"
 
 reverted=()
-for u in "${changed[@]}"; do
+for u in "${needs_restart[@]}"; do
   path=$(sh_dropin_path "$u")
   if "$ONIONARMOR_SH_SYSTEMCTL" restart "$u" >/dev/null 2>&1 && sh_wait_active "$u"; then
     info "restarted + active: $u"
@@ -138,7 +143,7 @@ for u in "${changed[@]}"; do
   reverted+=("$u")
 done
 
-audit_log sh.apply.done "changed=${changed[*]} reverted=${reverted[*]:-none}"
+audit_log sh.apply.done "changed=${changed[*]:-none} reverted=${reverted[*]:-none}"
 
 printf '\n[systemd-hardening] applied.\n'
 printf '  hardened : '
