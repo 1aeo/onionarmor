@@ -147,3 +147,7 @@ bats modules/dns-posture/tests/bats/
 ```
 
 Fully offline — every external command is stubbed. Covers apply / audit / revert, the duplicate-anchor regression, idempotency, every flag, and the verification + failure paths.
+
+---
+
+**See also:** [Modules overview](../../docs/modules.md) · [Troubleshooting](../../docs/troubleshooting.md) · [main README](../../README.md)

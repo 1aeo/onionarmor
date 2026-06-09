@@ -187,3 +187,7 @@ The offline suite stubs `sysctl` (emulating the kernel's
 trees, covering auto-detection, range compaction, disjoint bands, `--auto-buffer`,
 the loopback filter, manual/combined ranges, dry-run, the audit drift detector,
 and revert (removal + backup + runtime reset).
+
+---
+
+**See also:** [Modules overview](../../docs/modules.md) · [Troubleshooting](../../docs/troubleshooting.md) · [main README](../../README.md)

@@ -223,3 +223,7 @@ default drop, idempotency, dry-run, RPKI install-once, GTSM `ttl-security`, audi
 wildcard-vs-specific bind, audit stays green without the optional controls, RPKI
 up/down, FRR version advisory, revert (daemons restore + opt-in teardown), and
 the `check-own-roa-status` helper.
+
+---
+
+**See also:** [Modules overview](../../docs/modules.md) · [Troubleshooting](../../docs/troubleshooting.md) · [main README](../../README.md)
