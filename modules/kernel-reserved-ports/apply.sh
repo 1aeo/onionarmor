@@ -58,16 +58,12 @@ audit_log krp.apply.start "ranges=$ranges auto=$KRP_AUTO buffer=$KRP_AUTO_BUFFER
 # ---------------------------------------------------------------------------
 # 1. Write the managed drop-in (idempotent: skip if byte-identical).
 # ---------------------------------------------------------------------------
-rendered=$(krp_render_dropin "$ranges")
 mkdir -p "$ONIONARMOR_SYSCTL_DIR" || die "cannot create $ONIONARMOR_SYSCTL_DIR"
-if [ -f "$dropin" ] && [ "$(cat "$dropin")" = "$rendered" ]; then
-  info "drop-in already current: $dropin"
-else
-  tmp="$dropin.tmp.$$"
-  printf '%s\n' "$rendered" > "$tmp" || die "cannot write $tmp"
-  mv "$tmp" "$dropin" || { rm -f "$tmp"; die "cannot move $tmp -> $dropin"; }
+if oa_write_if_changed "$dropin" "$(krp_render_dropin "$ranges")"; then
   audit_log krp.apply.dropin "wrote=$dropin ranges=$ranges"
   info "wrote drop-in: $dropin"
+else
+  info "drop-in already current: $dropin"
 fi
 
 # ---------------------------------------------------------------------------

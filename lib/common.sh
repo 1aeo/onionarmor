@@ -22,9 +22,9 @@
 # if stderr is a tty.
 # ---------------------------------------------------------------------------
 if [ -t 2 ]; then
-  _OA_C_RED=$'\033[31m'; _OA_C_YEL=$'\033[33m'; _OA_C_OFF=$'\033[0m'
+  _OA_C_RED=$'\033[31m'; _OA_C_GRN=$'\033[32m'; _OA_C_YEL=$'\033[33m'; _OA_C_OFF=$'\033[0m'
 else
-  _OA_C_RED=""; _OA_C_YEL=""; _OA_C_OFF=""
+  _OA_C_RED=""; _OA_C_GRN=""; _OA_C_YEL=""; _OA_C_OFF=""
 fi
 
 die()  { printf '%sonionarmor: error:%s %s\n' "$_OA_C_RED" "$_OA_C_OFF" "$*" >&2; exit 1; }
@@ -40,6 +40,52 @@ _OA_DASH_SYSCTL_COL='----------'
 
 oa_utc_ts() { date -u +%Y%m%dT%H%M%SZ; }
 oa_utc_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+# ---------------------------------------------------------------------------
+# Module audit status reporting. Every module's audit.sh reports a series of
+# green/yellow/red checks then a verdict; this is the shared machinery so the
+# three modules don't each carry an identical reporter + summary block.
+#
+#   oa_status_check <green|yellow|red> <label> <detail>   per check line
+#   oa_status_summary <red-message>                        verdict line + exit
+#
+# Worst severity wins: green/yellow exit 0, any red exits 1. _oa_status_worst is
+# reset on each source of common.sh, i.e. once per audit run.
+# ---------------------------------------------------------------------------
+_oa_status_worst=0   # 0 green, 1 yellow, 2 red
+
+oa_status_check() {
+  local mark col
+  case "$1" in
+    green)  mark="[ ok ]"; col=$_OA_C_GRN ;;
+    yellow) mark="[warn]"; col=$_OA_C_YEL; [ "$_oa_status_worst" -lt 1 ] && _oa_status_worst=1 ;;
+    red)    mark="[FAIL]"; col=$_OA_C_RED; _oa_status_worst=2 ;;
+  esac
+  printf '%s%s%s %-26s %s\n' "$col" "$mark" "$_OA_C_OFF" "$2" "$3"
+}
+
+oa_status_summary() {
+  printf '\n'
+  case "$_oa_status_worst" in
+    0) info "audit: all green"; exit 0 ;;
+    1) info "audit: green/yellow — no failures, see warnings above"; exit 0 ;;
+    *) warn "audit: $1"; exit 1 ;;
+  esac
+}
+
+# oa_write_if_changed <path> <content>: atomically write <content> to <path>
+# only when it differs from the current file (idempotent). Returns 0 when the
+# file was (re)written, 1 when it was already byte-identical, so callers branch
+# to log "wrote" vs "already current". Dies on a write/rename failure. MUST be
+# used as an `if` condition — a bare call returning 1 would trip `set -e`.
+oa_write_if_changed() {
+  local path=$1 content=$2 tmp
+  [ -f "$path" ] && [ "$(cat "$path")" = "$content" ] && return 1
+  tmp="$path.tmp.$$"
+  printf '%s\n' "$content" > "$tmp" || die "cannot write $tmp"
+  mv "$tmp" "$path" || { rm -f "$tmp"; die "cannot move $tmp -> $path"; }
+  return 0
+}
 
 # ---------------------------------------------------------------------------
 # Audit log. Tab-separated for cheap awk parsing. Each apply / rollback /

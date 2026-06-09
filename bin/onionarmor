@@ -108,13 +108,13 @@ oa_parse_args() {
 cmd_list() {
   oa_parse_args "$@"
   require_role list
-  local f; f=$(role_file_for "$_oa_role")
-  info "role=$_oa_role file=$f"
+  info "role=$_oa_role file=$(role_file_for "$_oa_role")"
   printf '\n%-40s %s\n' "SYSCTL" "TARGET"
   printf '%-40s %s\n' "----------------------------------------" "------"
-  role_parse "$_oa_role" | awk '{printf "%-40s %s\n", $1, $2}'
-  local n; n=$(role_parse "$_oa_role" | wc -l | awk '{print $1}')
-  printf '\n%d sysctl entries.\n' "$n"
+  # Parse once: render the table and report the count via awk's END so the role
+  # file is read a single time.
+  role_parse "$_oa_role" \
+    | awk '{printf "%-40s %s\n", $1, $2} END {printf "\n%d sysctl entries.\n", NR}'
   printf '\n(Use `onionarmor diff --role %s` to compare to live host.)\n' "$_oa_role"
 }
 

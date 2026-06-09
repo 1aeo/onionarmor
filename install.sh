@@ -177,11 +177,11 @@ Commit or stash them, or re-run with ONIONARMOR_INSTALL_FORCE=1 to discard them.
 Push them first, or re-run with ONIONARMOR_INSTALL_FORCE=1 to discard them."
     fi
   fi
-  checkout_flags="--quiet"
+  checkout_flags=(--quiet)
   if [ "${ONIONARMOR_INSTALL_FORCE:-0}" = "1" ]; then
-    checkout_flags="--quiet --force"
+    checkout_flags+=(--force)
   fi
-  "$GIT" -C "$INSTALL_PREFIX" checkout $checkout_flags "$ONIONARMOR_REPO_REF"
+  "$GIT" -C "$INSTALL_PREFIX" checkout "${checkout_flags[@]}" "$ONIONARMOR_REPO_REF"
   "$GIT" -C "$INSTALL_PREFIX" reset --quiet --hard FETCH_HEAD
 else
   if [ -e "$INSTALL_PREFIX" ] && [ -n "$(ls -A "$INSTALL_PREFIX" 2>/dev/null)" ]; then
