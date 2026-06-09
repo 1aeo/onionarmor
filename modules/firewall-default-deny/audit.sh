@@ -77,6 +77,11 @@ nrules=$("$ONIONARMOR_FW_UFW" status numbered 2>/dev/null | grep -cE '^\[[[:spac
 fw_check green "rule count" "$nrules allow rule(s) active"
 
 # --- 5. listener <-> allow drift ------------------------------------------
+# Merge persisted --allow flags from apply with any CLI flags for audit
+persisted_allow=$(fw_read_extra_allow)
+if [ -n "$persisted_allow" ]; then
+  FW_EXTRA_ALLOW="$FW_EXTRA_ALLOW $persisted_allow"
+fi
 fw_build_manifest      # FW_RULES + FW_UNKNOWN for the CURRENT host
 listeners=$(fw_listeners | awk '{print $2}' | sort -u | paste -sd, - 2>/dev/null \
             || fw_listeners | awk '{print $2}' | sort -u | tr '\n' ',')

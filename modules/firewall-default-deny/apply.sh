@@ -62,10 +62,10 @@ fi
 # ---------------------------------------------------------------------------
 if fw_ufw_is_active && [ -f "$manifest_path" ]; then
   info "manifest changed — resetting ufw to remove stale rules"
-  "$ONIONARMOR_FW_UFW" disable >/dev/null 2>&1 || warn "ufw disable returned nonzero before reset"
+  "$ONIONARMOR_FW_UFW" disable >/dev/null 2>&1 || die "ufw disable failed before reset — cannot safely proceed"
   "$ONIONARMOR_FW_UFW" --force reset >/dev/null 2>&1 \
     || "$ONIONARMOR_FW_UFW" reset >/dev/null 2>&1 \
-    || warn "ufw reset returned nonzero"
+    || die "ufw reset failed — cannot apply new rules over stale state"
   audit_log fw.apply.reset "reason=manifest-changed"
 fi
 
@@ -170,12 +170,17 @@ fi
   || { audit_log fw.apply.fail "stage=enable"; die "ufw --force enable failed — firewall NOT active"; }
 
 # ---------------------------------------------------------------------------
-# 5. Write auxiliary state (manifest, latch, IPv6 choice) AFTER enable succeeds.
+# 5. Write auxiliary state (manifest, latch, IPv6 choice, extra allow) AFTER enable succeeds.
 #    Best-effort: warn but return 0 on failure (primary operation already done).
 # ---------------------------------------------------------------------------
 ipv6_choice_path=$(fw_ipv6_choice_path)
 if ! printf '%s\n' "$FW_IPV6" > "$ipv6_choice_path" 2>/dev/null; then
   warn "could not write IPv6 choice to $ipv6_choice_path"
+fi
+
+extra_allow_path=$(fw_extra_allow_path)
+if ! printf '%s\n' "$FW_EXTRA_ALLOW" > "$extra_allow_path" 2>/dev/null; then
+  warn "could not write extra allow ports to $extra_allow_path"
 fi
 
 if [ -n "$latch_job" ]; then

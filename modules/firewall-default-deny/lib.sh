@@ -36,6 +36,7 @@ fi
 : "${ONIONARMOR_FW_MANIFEST_NAME:=rules.manifest}"
 : "${ONIONARMOR_FW_LATCH_STATE_NAME:=safety-latch.job}"
 : "${ONIONARMOR_FW_IPV6_CHOICE_NAME:=ipv6.choice}"
+: "${ONIONARMOR_FW_EXTRA_ALLOW_NAME:=extra-allow.state}"
 
 # The unit restarted by the safety latch (sshd). Overridable for distros that
 # name it sshd.service.
@@ -126,9 +127,10 @@ OPTIONS
 EOF
 }
 
-fw_manifest_path()    { printf '%s/%s\n' "$ONIONARMOR_FW_STATE_DIR" "$ONIONARMOR_FW_MANIFEST_NAME"; }
-fw_latch_state_path() { printf '%s/%s\n' "$ONIONARMOR_FW_STATE_DIR" "$ONIONARMOR_FW_LATCH_STATE_NAME"; }
-fw_ipv6_choice_path() { printf '%s/%s\n' "$ONIONARMOR_FW_STATE_DIR" "$ONIONARMOR_FW_IPV6_CHOICE_NAME"; }
+fw_manifest_path()      { printf '%s/%s\n' "$ONIONARMOR_FW_STATE_DIR" "$ONIONARMOR_FW_MANIFEST_NAME"; }
+fw_latch_state_path()   { printf '%s/%s\n' "$ONIONARMOR_FW_STATE_DIR" "$ONIONARMOR_FW_LATCH_STATE_NAME"; }
+fw_ipv6_choice_path()   { printf '%s/%s\n' "$ONIONARMOR_FW_STATE_DIR" "$ONIONARMOR_FW_IPV6_CHOICE_NAME"; }
+fw_extra_allow_path()   { printf '%s/%s\n' "$ONIONARMOR_FW_STATE_DIR" "$ONIONARMOR_FW_EXTRA_ALLOW_NAME"; }
 
 # fw_frontend: echo "ufw" if ufw is available, else die telling the operator to
 # install it. We never silently apt-install ufw (it pulls iptables-persistent).
@@ -314,5 +316,13 @@ fw_latch_pending() {
 fw_read_ipv6_choice() {
   local f
   f=$(fw_ipv6_choice_path)
+  [ -f "$f" ] && cat "$f" 2>/dev/null || true
+}
+
+# fw_read_extra_allow: echo the space-separated list of --allow ports persisted
+# at apply time, or empty if never applied or no extra ports were allowed.
+fw_read_extra_allow() {
+  local f
+  f=$(fw_extra_allow_path)
   [ -f "$f" ] && cat "$f" 2>/dev/null || true
 }
