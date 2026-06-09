@@ -121,7 +121,8 @@ fi
 # 5. Enable + (re)start chrony so the pinned sources are live.
 # ---------------------------------------------------------------------------
 restart_failed=0
-"$ONIONARMOR_CHR_SYSTEMCTL" enable "$ONIONARMOR_CHR_SERVICE" >/dev/null 2>&1 || true
+"$ONIONARMOR_CHR_SYSTEMCTL" enable "$ONIONARMOR_CHR_SERVICE" >/dev/null 2>&1 \
+  || warn "could not enable $ONIONARMOR_CHR_SERVICE — chrony may not start on reboot"
 "$ONIONARMOR_CHR_SYSTEMCTL" restart "$ONIONARMOR_CHR_SERVICE" >/dev/null 2>&1 \
   || { warn "could not restart $ONIONARMOR_CHR_SERVICE via systemctl"; restart_failed=1; }
 

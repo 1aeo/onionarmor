@@ -85,6 +85,10 @@ chr_parse_flags() {
     esac
   done
   case "$CHR_OFFSET_MS" in (*[!0-9]*|"") die "chrony-pinning: --offset-ms must be numeric: $CHR_OFFSET_MS" ;; esac
+  # A value-taking flag given with an empty value would silently render a broken
+  # makestep/leapsectz line — reject it loudly instead.
+  [ -n "$CHR_MAKESTEP" ]  || die "chrony-pinning: --makestep requires a non-empty value (e.g. \"1.0 3\")"
+  [ -n "$CHR_LEAPSECTZ" ] || die "chrony-pinning: --leapsectz requires a non-empty value (e.g. right/UTC)"
 }
 
 chr_usage() {
@@ -115,14 +119,14 @@ chr_state_file()   { printf '%s/state\n' "$ONIONARMOR_CHR_STATE_DIR"; }
 
 # chr_write_state: persist the current flag state so audit can read it back.
 chr_write_state() {
-  local state=$(chr_state_file)
+  local state; state=$(chr_state_file)
   mkdir -p "$ONIONARMOR_CHR_STATE_DIR" || return 1
   printf 'CHR_MASK_TIMESYNCD=%s\n' "$CHR_MASK_TIMESYNCD" > "$state" || return 1
 }
 
 # chr_read_state: if a state file exists, source it to override flag defaults.
 chr_read_state() {
-  local state=$(chr_state_file)
+  local state; state=$(chr_state_file)
   # shellcheck disable=SC1090
   [ -f "$state" ] && . "$state" || true
 }
