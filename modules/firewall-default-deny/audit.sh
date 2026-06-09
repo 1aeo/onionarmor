@@ -54,16 +54,11 @@ else
 fi
 
 # --- 3. IPv6 enabled ------------------------------------------------------
-# Read the persisted IPv6 choice from apply if available
-ipv6_choice=$(fw_read_ipv6_choice)
-if [ -n "$ipv6_choice" ]; then
-  # Use the persisted choice from apply, unless overridden by --no-ipv6 flag
-  if [ "$FW_IPV6" -eq 1 ] && [ "$ipv6_choice" = "0" ]; then
-    # Apply was v4-only, audit didn't override → use apply's choice
-    FW_IPV6=0
-  fi
-fi
-
+# A v4-only host has UNFILTERED v6 inbound — a real exposure — so a plain audit
+# reports that RED by default. We do NOT silently downgrade based on a persisted
+# apply-time ipv6.choice: an operator who deliberately chose v4-only acknowledges
+# it per-run with `audit --no-ipv6` (the yellow path below). Auto-trusting the
+# on-disk choice would mask drift or a host that gained v6 connectivity later.
 if fw_ipv6_enabled; then
   fw_check green "IPv6 enabled" "IPV6=yes in $(basename "$ONIONARMOR_FW_UFW_DEFAULTS")"
 elif [ "$FW_IPV6" -eq 0 ]; then

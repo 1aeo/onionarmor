@@ -52,6 +52,13 @@ load test_helper
   [[ "$output" == *"[FAIL]"*"IPv6 enabled"* ]]
 }
 
+@test "audit: --no-ipv6 acknowledges v4-only as yellow (not red)" {
+  bash "$APPLY" --no-ipv6 >/dev/null
+  run bash "$AUDIT" --no-ipv6
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[warn]"*"IPv6 enabled"*"operator choice"* ]]
+}
+
 @test "audit: reports rule count + listener set" {
   add_listener 0.0.0.0 443
   bash "$APPLY" >/dev/null

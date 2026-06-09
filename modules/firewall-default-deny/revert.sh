@@ -66,6 +66,7 @@ fi
 # 3. Remove auxiliary state (manifest, IPv6 choice) only if reset succeeded.
 # ---------------------------------------------------------------------------
 ipv6_choice_path=$(fw_ipv6_choice_path)
+extra_allow_path=$(fw_extra_allow_path)
 if [ "$reset_ok" -eq 1 ]; then
   if [ -f "$manifest_path" ]; then
     rm -f "$manifest_path" || warn "could not remove $manifest_path"
@@ -73,17 +74,26 @@ if [ "$reset_ok" -eq 1 ]; then
     info "removed rule manifest: $manifest_path"
   fi
   rm -f "$ipv6_choice_path" 2>/dev/null || true
+  rm -f "$extra_allow_path" 2>/dev/null || true
 else
   if [ -f "$manifest_path" ]; then
     warn "keeping manifest $manifest_path (ufw reset failed — retry revert)"
   fi
 fi
 
-audit_log fw.revert.done "ok=1"
+# If ufw is present but disable or reset actually failed, the posture was NOT
+# fully torn down — report failure (nonzero) so callers/automation don't assume
+# a clean revert. A host without ufw installed has nothing to disable (ok).
+revert_failed=0
+if command -v "$ONIONARMOR_FW_UFW" >/dev/null 2>&1 \
+   && { [ "$disable_ok" -ne 1 ] || [ "$reset_ok" -ne 1 ]; }; then
+  revert_failed=1
+fi
+audit_log fw.revert.done "ok=$([ "$revert_failed" -eq 0 ] && echo 1 || echo 0)"
 cat <<EOF
 
 [firewall-default-deny] reverted.
-  ufw      : disabled + reset (left installed)
+  ufw      : $([ "$revert_failed" -eq 0 ] && echo "disabled + reset (left installed)" || echo "disable/reset FAILED — posture may still be partially active")
   latch    : ${job:-none} cancelled
 EOF
 if [ "$reset_ok" -eq 1 ]; then
@@ -96,3 +106,5 @@ cat <<EOF
 WARNING: inbound is no longer default-deny. Re-apply to restore the posture:
   onionarmor apply --module firewall-default-deny
 EOF
+
+[ "$revert_failed" -eq 0 ] || { warn "revert did not fully tear down ufw — re-run revert"; exit 1; }

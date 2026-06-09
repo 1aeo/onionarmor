@@ -93,7 +93,13 @@ fw_validate_flags() {
   case "$FW_LATCH_MIN" in (*[!0-9]*|"") die "firewall-default-deny: --latch-minutes must be numeric: $FW_LATCH_MIN" ;; esac
   [ "$FW_LATCH_MIN" -ge 1 ] || die "firewall-default-deny: --latch-minutes must be >= 1"
   for p in $FW_EXTRA_ALLOW; do
-    case "${p%%/*}" in (*[!0-9]*|"") die "firewall-default-deny: --allow expects a port (or port/proto): $p" ;; esac
+    case "${p%%/*}" in (*[!0-9]*|"") die "firewall-default-deny: --allow expects a TCP port: $p" ;; esac
+    # This module manages TCP listeners only, so the emitted rules are always
+    # /tcp. Accept a bare port or an explicit /tcp; reject any other proto rather
+    # than silently applying it as tcp.
+    case "$p" in
+      */*) case "${p#*/}" in tcp) : ;; *) die "firewall-default-deny: --allow only supports tcp (this module manages TCP listeners): $p" ;; esac ;;
+    esac
   done
   if [ -n "$FW_SSH_PORT_OVERRIDE" ]; then
     case "$FW_SSH_PORT_OVERRIDE" in (*[!0-9]*|"") die "firewall-default-deny: --ssh-port must be numeric: $FW_SSH_PORT_OVERRIDE" ;; esac
@@ -115,8 +121,9 @@ ssh` in 5 minutes, so a wrong SSH detection cannot lock you out. The apply print
 the one command to cancel it once you've confirmed your session survives.
 
 OPTIONS
-  --allow <port[/proto]>  Allow an extra inbound port (repeatable). Required for
-                          any listener that is not auto-recognised.
+  --allow <port[/tcp]>    Allow an extra inbound TCP port (repeatable). Required
+                          for any listener that is not auto-recognised. This
+                          module manages TCP only; non-tcp protos are rejected.
   --ssh-port <n>          Override the auto-detected SSH port.
   --no-ipv6               Do not enable UFW IPv6 (default: enable v4+v6).
   --no-safety-latch       Skip the 5-minute auto-disable latch (console access!).

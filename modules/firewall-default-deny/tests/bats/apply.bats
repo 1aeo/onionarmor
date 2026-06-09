@@ -31,7 +31,7 @@ load test_helper
   [ "$(grep -c '^allow ' "$m")" -eq 1 ]
   # ufw enabled + defaults
   [ "$(cat "$UFW_STATE/active")" = "active" ]
-  grep -q 'deny incoming' "$STUB/ufw" || true
+  [ "$(cat "$UFW_STATE/default_in")" = "deny" ]
   grep -q '22/tcp ALLOW IN' "$UFW_STATE/rules"
   # safety latch scheduled + cancel instruction printed
   [ -s "$AT_QUEUE" ]
@@ -117,6 +117,17 @@ load test_helper
   run bash "$APPLY" --allow 8080
   [ "$status" -eq 0 ]
   grep -q '^allow 8080/tcp$' "$ONIONARMOR_FW_STATE_DIR/rules.manifest"
+}
+
+@test "apply: --allow accepts an explicit /tcp suffix but rejects other protos" {
+  add_listener 0.0.0.0 8080
+  run bash "$APPLY" --allow 8080/tcp
+  [ "$status" -eq 0 ]
+  grep -q '^allow 8080/tcp$' "$ONIONARMOR_FW_STATE_DIR/rules.manifest"
+  # a non-tcp proto must fail loudly rather than be silently applied as tcp
+  run bash "$APPLY" --allow 53/udp --dry-run
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"only supports tcp"* ]]
 }
 
 @test "apply: enables IPv6 in /etc/default/ufw before enabling" {

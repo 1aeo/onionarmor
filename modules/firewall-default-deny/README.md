@@ -47,7 +47,7 @@ echo 'ufw disable && systemctl restart ssh' | at now + 5 minutes
 
 and prints the exact command to cancel it:
 
-```
+```sh
 atrm <job>          # or:  atrm $(atq | head -1 | awk '{print $1}')
 ```
 

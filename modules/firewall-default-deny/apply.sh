@@ -166,8 +166,17 @@ fi
 # ---------------------------------------------------------------------------
 # 4. Enable ufw (now that rules + latch are in place).
 # ---------------------------------------------------------------------------
-"$ONIONARMOR_FW_UFW" --force enable >/dev/null 2>&1 \
-  || { audit_log fw.apply.fail "stage=enable"; die "ufw --force enable failed — firewall NOT active"; }
+if ! "$ONIONARMOR_FW_UFW" --force enable >/dev/null 2>&1; then
+  # Enable failed: cancel the latch we just queued so it can't auto-disable a
+  # host where the firewall never came up (orphan latch).
+  if [ -n "$latch_job" ]; then
+    "$ONIONARMOR_FW_ATRM" "$latch_job" >/dev/null 2>&1 \
+      && info "cancelled orphan safety-latch at job $latch_job (enable failed)" \
+      || warn "could not cancel orphan safety-latch at job $latch_job — run: atrm $latch_job"
+  fi
+  audit_log fw.apply.fail "stage=enable latch_cancelled=${latch_job:-none}"
+  die "ufw --force enable failed — firewall NOT active"
+fi
 
 # ---------------------------------------------------------------------------
 # 5. Write auxiliary state (manifest, latch, IPv6 choice, extra allow) AFTER enable succeeds.
