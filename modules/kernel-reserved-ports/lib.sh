@@ -1,6 +1,6 @@
 # shellcheck shell=bash
-# SC2034: the colour vars + KRP_* flag defaults set here are consumed by the
-# apply/audit/revert scripts that source this file, not within it.
+# SC2034: the KRP_* flag defaults set here are consumed by the apply/audit/revert
+# scripts that source this file, not within it.
 # shellcheck disable=SC2034
 #
 # modules/kernel-reserved-ports/lib.sh — shared helpers for the
@@ -54,13 +54,6 @@ KRP_SYSCTL_KEY="net.ipv4.ip_local_reserved_ports"
 
 # Tor directives that open a (potentially loopback) listener.
 KRP_TOR_DIRECTIVES="MetricsPort ControlPort SocksPort DNSPort TransPort HTTPTunnelPort"
-
-# --- status colours (green/yellow/red) ------------------------------------
-if [ -t 2 ]; then
-  OA_KRP_GREEN=$'\033[32m'; OA_KRP_YEL=$'\033[33m'; OA_KRP_RED=$'\033[31m'; OA_KRP_OFF=$'\033[0m'
-else
-  OA_KRP_GREEN=""; OA_KRP_YEL=""; OA_KRP_RED=""; OA_KRP_OFF=""
-fi
 
 # --- flag defaults --------------------------------------------------------
 krp_set_defaults() {

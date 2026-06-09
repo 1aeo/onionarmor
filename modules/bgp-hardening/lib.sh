@@ -1,6 +1,6 @@
 # shellcheck shell=bash
-# SC2034: the colour vars + BGP_* flag defaults set here are consumed by the
-# apply/audit/revert scripts that source this file, not within it.
+# SC2034: the BGP_* flag defaults set here are consumed by the apply/audit/revert
+# scripts that source this file, not within it.
 # shellcheck disable=SC2034
 #
 # modules/bgp-hardening/lib.sh — shared helpers for the bgp-hardening module's
@@ -60,13 +60,6 @@ BGP_RPKI_ROUTEMAP="ONIONARMOR-RPKI-IN"
 BGP_FRR_FLAGGED_VERSIONS="8.4.4 10.5.0"
 # Minimum FRR release the fleet considers current.
 BGP_FRR_MIN_VERSION="10.2"
-
-# --- status colours (green/yellow/red) ------------------------------------
-if [ -t 2 ]; then
-  OA_BGP_GREEN=$'\033[32m'; OA_BGP_YEL=$'\033[33m'; OA_BGP_RED=$'\033[31m'; OA_BGP_OFF=$'\033[0m'
-else
-  OA_BGP_GREEN=""; OA_BGP_YEL=""; OA_BGP_RED=""; OA_BGP_OFF=""
-fi
 
 # --- flag defaults --------------------------------------------------------
 bgp_set_defaults() {

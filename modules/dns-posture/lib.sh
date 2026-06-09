@@ -1,6 +1,6 @@
 # shellcheck shell=bash
-# SC2034: the colour vars + DNS_* flag defaults set here are consumed by the
-# apply/audit/revert scripts that source this file, not within it.
+# SC2034: the DNS_* flag defaults set here are consumed by the apply/audit/revert
+# scripts that source this file, not within it.
 # shellcheck disable=SC2034
 #
 # modules/dns-posture/lib.sh — shared helpers for the dns-posture module's
@@ -46,13 +46,6 @@ fi
 # The 1aeo fleet default DoT upstream set — pinned by SNI, all on :853.
 # Cloudflare + Quad9 + Google + AdGuard + Mullvad, v4 and a couple of v6.
 OA_DNS_DEFAULT_UPSTREAMS='1.1.1.1@853#cloudflare-dns.com,1.0.0.1@853#cloudflare-dns.com,9.9.9.9@853#dns.quad9.net,149.112.112.112@853#dns.quad9.net,8.8.8.8@853#dns.google,94.140.14.14@853#dns.adguard-dns.com,194.242.2.2@853#dns.mullvad.net,2620:fe::fe@853#dns.quad9.net,2606:4700:4700::1111@853#cloudflare-dns.com'
-
-# --- status colours (green/yellow/red) ------------------------------------
-if [ -t 2 ]; then
-  OA_DNS_GREEN=$'\033[32m'; OA_DNS_YEL=$'\033[33m'; OA_DNS_RED=$'\033[31m'; OA_DNS_OFF=$'\033[0m'
-else
-  OA_DNS_GREEN=""; OA_DNS_YEL=""; OA_DNS_RED=""; OA_DNS_OFF=""
-fi
 
 # --- flag defaults --------------------------------------------------------
 dns_set_defaults() {
