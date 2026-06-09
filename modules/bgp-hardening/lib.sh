@@ -229,9 +229,6 @@ bgp_resolve_peers() {
   bgp_detect_peers | awk 'NF && !seen[$0]++'
 }
 
-# bgp_is_v6 <addr>: succeed if the address looks like IPv6 (contains a colon).
-bgp_is_v6() { case "$1" in *:*) return 0 ;; *) return 1 ;; esac; }
-
 # --- /etc/frr/daemons listener-bind edit ----------------------------------
 # bgp_daemons_current_options: the current bgpd_options value (without quotes),
 # or empty if there is no bgpd_options line.
@@ -239,11 +236,6 @@ bgp_daemons_current_options() {
   local f; f=$(bgp_daemons_path)
   [ -f "$f" ] || return 0
   sed -n 's/^[[:space:]]*bgpd_options[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$f" | tail -1
-}
-
-# bgp_options_has_bind <options> <ip>: true if options already pin `-l <ip>`.
-bgp_options_has_bind() {
-  case " $1 " in *" -l $2 "*) return 0 ;; *) return 1 ;; esac
 }
 
 # bgp_options_with_bind <options> <ip>: drop any existing `-l <addr>` token(s)
