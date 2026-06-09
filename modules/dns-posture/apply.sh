@@ -91,15 +91,11 @@ fi
 # ---------------------------------------------------------------------------
 # 3. Write the managed unbound snippet (idempotent: skip if byte-identical).
 # ---------------------------------------------------------------------------
-rendered=$(dns_render_snippet)
-if [ -f "$snippet" ] && [ "$(cat "$snippet")" = "$rendered" ]; then
-  info "unbound snippet already current: $snippet"
-else
-  tmp="$snippet.tmp.$$"
-  printf '%s\n' "$rendered" > "$tmp" || die "cannot write $tmp"
-  mv "$tmp" "$snippet" || die "cannot move $tmp -> $snippet"
+if oa_write_if_changed "$snippet" "$(dns_render_snippet)"; then
   audit_log dns.apply.snippet "wrote=$snippet"
   info "wrote unbound snippet: $snippet"
+else
+  info "unbound snippet already current: $snippet"
 fi
 
 # Guard against the duplicate-anchor bug before we ever (re)start unbound.

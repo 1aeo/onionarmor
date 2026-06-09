@@ -35,7 +35,7 @@ if [ "$BGP_DO_FIREWALL" -eq 1 ] || [ "$BGP_GTSM" -eq 1 ]; then
   fi
 fi
 
-dropin_daemons=$(bgp_daemons_path)
+dropin_daemons=$ONIONARMOR_BGP_DAEMONS
 peer_list_oneline=$(printf '%s' "$peers" | tr '\n' ' ' | sed 's/[[:space:]]*$//')
 
 # ---------------------------------------------------------------------------
@@ -92,16 +92,12 @@ if [ "$BGP_BIND_FIX" -eq 1 ]; then
     audit_log bgp.apply.backup "from=$dropin_daemons to=$backup"
     info "backed up daemons -> $backup"
   fi
-  rendered=$(bgp_render_daemons "$bind_ip")
-  if [ "$(cat "$dropin_daemons")" = "$rendered" ]; then
-    info "listener bind already current: bgpd_options has -l $bind_ip"
-  else
-    tmp="$dropin_daemons.oa.$$"
-    printf '%s\n' "$rendered" > "$tmp" || die "cannot write $tmp"
-    mv "$tmp" "$dropin_daemons" || { rm -f "$tmp"; die "cannot move $tmp -> $dropin_daemons"; }
+  if oa_write_if_changed "$dropin_daemons" "$(bgp_render_daemons "$bind_ip")"; then
     audit_log bgp.apply.bind "daemons=$dropin_daemons bind=$bind_ip"
     info "set bgpd listener bind -> $bind_ip"
     frr_changed=1; any_changed=1; bgpd_options_changed=1
+  else
+    info "listener bind already current: bgpd_options has -l $bind_ip"
   fi
 fi
 

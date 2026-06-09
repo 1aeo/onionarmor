@@ -21,18 +21,6 @@ role_validate() {
   [ -r "$f" ] || die "role config not found or unreadable: $f"
 }
 
-# role_list: print one role name per line for every readable .conf in
-#            ONIONARMOR_ROLES_DIR.
-role_list() {
-  local f base
-  if [ ! -d "$ONIONARMOR_ROLES_DIR" ]; then return 0; fi
-  for f in "$ONIONARMOR_ROLES_DIR"/*.conf; do
-    [ -r "$f" ] || continue
-    base=$(basename "$f" .conf)
-    printf '%s\n' "$base"
-  done
-}
-
 # role_parse <role-name>: emit `key value` pairs (space-separated) to stdout,
 # one per line. Skips comments and blanks. Trims trailing comments on the
 # value line.

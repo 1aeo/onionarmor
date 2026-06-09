@@ -12,7 +12,7 @@ _here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 bgp_parse_flags "$@"
 
-daemons=$(bgp_daemons_path)
+daemons=$ONIONARMOR_BGP_DAEMONS
 backup=$(bgp_daemons_backup_path)
 marker=$(bgp_rpki_marker_path)
 touched=0
