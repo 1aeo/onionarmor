@@ -16,10 +16,6 @@ uu_parse_flags "$@"
 f50=$(uu_50_path)
 f20=$(uu_20_path)
 
-# Persist the apply-time flags so audit can re-render with the same posture.
-mkdir -p "$ONIONARMOR_UU_STATE_DIR" || die "cannot create state dir"
-uu_save_flags || die "cannot save apply-time flags"
-
 # ---------------------------------------------------------------------------
 # Dry run: print the plan + rendered config, change nothing.
 # ---------------------------------------------------------------------------
@@ -92,6 +88,10 @@ uu_install_file() {
 
 uu_install_file "$f50" "$(uu_render_50)" uu.apply.conf50
 uu_install_file "$f20" "$(uu_render_20)" uu.apply.conf20
+
+# Persist the apply-time flags now that the primary operation succeeded.
+# Best-effort: a state-dir permission issue cannot abort the live posture.
+uu_save_flags || warn "could not persist apply-time flags; audit will use defaults"
 
 # ---------------------------------------------------------------------------
 # 3. Enable + start the service so the posture is live.
