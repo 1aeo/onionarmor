@@ -102,6 +102,11 @@ chr_write_if_changed "$sources" "$(chr_render_sources)" chr.apply.sources
 chr_write_if_changed "$conf" "$(chr_render_conf)" chr.apply.conf
 
 # ---------------------------------------------------------------------------
+# 3a. Write state file so audit can read back the mask_timesyncd choice.
+# ---------------------------------------------------------------------------
+chr_write_state || warn "could not write state file"
+
+# ---------------------------------------------------------------------------
 # 4. Mask + stop systemd-timesyncd so only chrony disciplines the clock.
 # ---------------------------------------------------------------------------
 if [ "$CHR_MASK_TIMESYNCD" -eq 1 ]; then

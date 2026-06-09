@@ -9,6 +9,7 @@ _here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 . "$_here/lib.sh"
 
 chr_parse_flags "$@"
+chr_read_state  # override defaults with persisted state from apply
 
 _chr_worst=0
 chr_check() {

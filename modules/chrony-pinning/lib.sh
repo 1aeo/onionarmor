@@ -111,6 +111,21 @@ EOF
 chr_sources_path() { printf '%s/%s\n' "$ONIONARMOR_CHR_SOURCES_DIR" "$ONIONARMOR_CHR_SOURCES_NAME"; }
 chr_conf_path()    { printf '%s/%s\n' "$ONIONARMOR_CHR_CONF_DIR" "$ONIONARMOR_CHR_CONF_NAME"; }
 chr_mainconf_backup() { printf '%s/chrony.conf.orig\n' "$ONIONARMOR_CHR_STATE_DIR"; }
+chr_state_file()   { printf '%s/state\n' "$ONIONARMOR_CHR_STATE_DIR"; }
+
+# chr_write_state: persist the current flag state so audit can read it back.
+chr_write_state() {
+  local state=$(chr_state_file)
+  mkdir -p "$ONIONARMOR_CHR_STATE_DIR" || return 1
+  printf 'CHR_MASK_TIMESYNCD=%s\n' "$CHR_MASK_TIMESYNCD" > "$state" || return 1
+}
+
+# chr_read_state: if a state file exists, source it to override flag defaults.
+chr_read_state() {
+  local state=$(chr_state_file)
+  # shellcheck disable=SC1090
+  [ -f "$state" ] && . "$state" || true
+}
 
 # chr_render_sources: emit the managed .sources file (server/pool lines only).
 chr_render_sources() {

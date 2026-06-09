@@ -14,6 +14,7 @@ chr_parse_flags "$@"
 sources=$(chr_sources_path)
 conf=$(chr_conf_path)
 backup=$(chr_mainconf_backup)
+state=$(chr_state_file)
 
 audit_log chr.revert.start "sources=$sources conf=$conf"
 
@@ -46,9 +47,13 @@ fi
 
 # ---------------------------------------------------------------------------
 # 3. Unmask + restart systemd-timesyncd so the host keeps disciplining time.
-#    Only if we actually managed these services (i.e. had module-owned files).
+#    Only if we actually managed these services (i.e. had module-owned files
+#    OR a state file indicating apply ran).
 # ---------------------------------------------------------------------------
-if [ "$had_files" -eq 1 ] || [ "$had_backup" -eq 1 ]; then
+had_state=0
+[ -f "$state" ] && had_state=1
+
+if [ "$had_files" -eq 1 ] || [ "$had_backup" -eq 1 ] || [ "$had_state" -eq 1 ]; then
   "$ONIONARMOR_CHR_SYSTEMCTL" unmask "$ONIONARMOR_CHR_TIMESYNCD" >/dev/null 2>&1 || true
   "$ONIONARMOR_CHR_SYSTEMCTL" enable --now "$ONIONARMOR_CHR_TIMESYNCD" >/dev/null 2>&1 \
     || "$ONIONARMOR_CHR_SYSTEMCTL" start "$ONIONARMOR_CHR_TIMESYNCD" >/dev/null 2>&1 || true
@@ -63,12 +68,15 @@ if [ "$had_files" -eq 1 ] || [ "$had_backup" -eq 1 ]; then
     || warn "could not stop $ONIONARMOR_CHR_SERVICE (already stopped?)"
   "$ONIONARMOR_CHR_SYSTEMCTL" disable "$ONIONARMOR_CHR_SERVICE" >/dev/null 2>&1 || true
   audit_log chr.revert.chrony "stopped=$ONIONARMOR_CHR_SERVICE"
+
+  # Remove state file after successful service revert.
+  rm -f "$state" || true
 else
-  info "no module-owned files found; skipping service changes"
+  info "no module-owned files or state found; skipping service changes"
 fi
 
 audit_log chr.revert.done "ok=1"
-if [ "$had_files" -eq 1 ] || [ "$had_backup" -eq 1 ]; then
+if [ "$had_files" -eq 1 ] || [ "$had_backup" -eq 1 ] || [ "$had_state" -eq 1 ]; then
   cat <<EOF
 
 [chrony-pinning] reverted.
@@ -82,7 +90,7 @@ EOF
 else
   cat <<EOF
 
-[chrony-pinning] revert: no module-owned files found.
+[chrony-pinning] revert: no module-owned files or state found.
   Nothing to revert; services left untouched.
 EOF
 fi
