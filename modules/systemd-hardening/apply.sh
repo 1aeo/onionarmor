@@ -54,16 +54,32 @@ mkdir -p "$ONIONARMOR_SH_STATE_DIR" || die "cannot create state dir $ONIONARMOR_
 #    that need activation — if a prior run used --no-restart, drop-ins exist but
 #    were never loaded, so a normal apply must reload + restart them.
 # ---------------------------------------------------------------------------
+# Units whose current drop-in is already loaded (from a prior normal apply) so a
+# re-apply doesn't needlessly restart them. A drop-in that is byte-current but
+# NOT in this set was written by --no-restart and still needs activation.
+activated_file=$(sh_activated_state)
+prev_activated=" "
+[ -f "$activated_file" ] && prev_activated=" $(tr '\n' ' ' < "$activated_file") "
+
 changed=()
 skipped=()
 needs_restart=()
+already_live=()   # current drop-in AND already loaded -> leave untouched
 for u in "${UNITS[@]}"; do
   dir=$(sh_dropin_dir "$u")
   path=$(sh_dropin_path "$u")
   rendered=$(sh_render_dropin "$u")
   if [ -f "$path" ] && [ "$(cat "$path")" = "$rendered" ]; then
-    info "drop-in already current: $path"
-    needs_restart+=("$u")
+    case "$prev_activated" in
+      *" $u "*)
+        info "drop-in already current and active: $path"
+        already_live+=("$u")
+        ;;
+      *)
+        info "drop-in already current but not yet loaded — will restart: $path"
+        needs_restart+=("$u")
+        ;;
+    esac
     continue
   fi
   if [ -f "$path" ] && ! sh_is_managed_dropin "$path"; then
@@ -93,7 +109,18 @@ if [ "$SH_NO_RESTART" -eq 1 ]; then
   exit 0
 fi
 
+# sh_write_activated <unit...>: persist the set of units whose current drop-in is
+# loaded, so the next apply stays idempotent.
+sh_write_activated() {
+  if [ "$#" -eq 0 ]; then
+    : > "$activated_file" 2>/dev/null || true
+  else
+    printf '%s\n' "$@" > "$activated_file" 2>/dev/null || warn "could not write $activated_file"
+  fi
+}
+
 if [ "${#needs_restart[@]}" -eq 0 ]; then
+  sh_write_activated ${already_live[@]+"${already_live[@]}"}
   audit_log sh.apply.done "changed=none skipped=${skipped[*]:-none}"
   if [ "${#skipped[@]}" -gt 0 ]; then
     info "no changes: ${#skipped[@]} unit(s) skipped due to foreign drop-ins"
@@ -110,14 +137,16 @@ fi
 #    restart, wait up to 30s for the unit to be active; auto-revert on failure.
 # ---------------------------------------------------------------------------
 "$ONIONARMOR_SH_SYSTEMCTL" daemon-reload >/dev/null 2>&1 \
-  || warn "systemctl daemon-reload returned nonzero (continuing)"
+  || die "systemctl daemon-reload failed — refusing to restart units against a stale unit cache"
 
 reverted=()
+restarted_ok=()
 for u in "${needs_restart[@]}"; do
   path=$(sh_dropin_path "$u")
   if "$ONIONARMOR_SH_SYSTEMCTL" restart "$u" >/dev/null 2>&1 && sh_wait_active "$u"; then
     info "restarted + active: $u"
     audit_log sh.apply.restart "unit=$u ok=1"
+    restarted_ok+=("$u")
     continue
   fi
 
@@ -142,6 +171,11 @@ for u in "${needs_restart[@]}"; do
   fi
   reverted+=("$u")
 done
+
+# Persist the units whose hardening drop-in is now loaded (already-live this run
+# plus the ones we just restarted; auto-reverted units dropped their drop-in and
+# are excluded) so the next apply skips restarting them.
+sh_write_activated ${already_live[@]+"${already_live[@]}"} ${restarted_ok[@]+"${restarted_ok[@]}"}
 
 audit_log sh.apply.done "changed=${changed[*]:-none} reverted=${reverted[*]:-none}"
 

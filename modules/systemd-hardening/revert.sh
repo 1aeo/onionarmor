@@ -48,8 +48,14 @@ done
 #    Best-effort restart: a unit that won't come back is surfaced, not fatal —
 #    the operator may have stopped it deliberately.
 # ---------------------------------------------------------------------------
+# The drop-ins are already off disk; if daemon-reload fails here, systemd still
+# has the hardened unit cached and a restart would re-apply the very sandbox we
+# just removed. Fail fast rather than silently leave units hardened (CR revert.sh:52).
 "$ONIONARMOR_SH_SYSTEMCTL" daemon-reload >/dev/null 2>&1 \
-  || warn "systemctl daemon-reload returned nonzero (continuing)"
+  || audit_fail_die sh.revert.fail "stage=daemon-reload" "systemctl daemon-reload failed — units may still be hardened; re-run revert"
+
+# The next apply must not assume these units are still activated.
+rm -f "$(sh_activated_state)" 2>/dev/null || true
 
 down=()
 for u in "${units[@]}"; do

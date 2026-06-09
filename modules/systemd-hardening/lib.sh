@@ -226,6 +226,12 @@ sh_rwpaths_for_unit() {
 sh_dropin_dir()  { printf '%s/%s.d\n' "$ONIONARMOR_SH_DROPIN_ROOT" "$1"; }
 sh_dropin_path() { printf '%s/%s.d/%s\n' "$ONIONARMOR_SH_DROPIN_ROOT" "$1" "$ONIONARMOR_SH_DROPIN_NAME"; }
 
+# sh_activated_state: path to the newline-separated list of units whose current
+# hardening drop-in has actually been loaded (restarted) — lets a re-apply stay
+# idempotent (skip restarting already-live units) while still activating drop-ins
+# a prior --no-restart left on disk but never loaded.
+sh_activated_state() { printf '%s/activated\n' "$ONIONARMOR_SH_STATE_DIR"; }
+
 # sh_render_dropin <unit>: emit the managed [Service] drop-in for <unit>.
 sh_render_dropin() {
   local unit=$1 caps rwpaths

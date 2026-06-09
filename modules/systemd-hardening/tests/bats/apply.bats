@@ -96,6 +96,19 @@ load test_helper
   [[ "$output" == *"safety net is DISABLED"* ]]
 }
 
+@test "apply: a later run activates drop-ins a prior --no-restart left on disk" {
+  bash "$APPLY" --no-restart >/dev/null
+  : > "$SC_STATE/systemctl.log"
+  run bash "$APPLY"            # drop-ins are byte-current but never loaded
+  [ "$status" -eq 0 ]
+  grep -q 'restart' "$SC_STATE/systemctl.log"   # must activate them now
+  # and a SECOND normal run is then idempotent (no further restart)
+  : > "$SC_STATE/systemctl.log"
+  run bash "$APPLY"
+  [ "$status" -eq 0 ]
+  ! grep -q 'restart' "$SC_STATE/systemctl.log"
+}
+
 @test "AUTO-REVERT: a unit that won't start hardened is recovered + exit 2" {
   # onionwarden fails to start WHILE its drop-in exists (too-tight scoping),
   # then comes up once apply removes the drop-in.
