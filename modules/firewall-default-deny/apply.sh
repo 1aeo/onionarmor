@@ -18,6 +18,12 @@ frontend=$(fw_frontend)            # "ufw" or dies with an install hint
 manifest_path=$(fw_manifest_path)
 latch_state=$(fw_latch_state_path)
 
+# Merge persisted --allow flags from previous apply with any CLI flags
+persisted_allow=$(fw_read_extra_allow)
+if [ -n "$persisted_allow" ]; then
+  FW_EXTRA_ALLOW="$FW_EXTRA_ALLOW $persisted_allow"
+fi
+
 fw_build_manifest                  # sets FW_RULES + FW_UNKNOWN (globals)
 rendered=$(fw_render_manifest)
 
@@ -52,21 +58,47 @@ mkdir -p "$ONIONARMOR_FW_STATE_DIR" || die "cannot create state dir $ONIONARMOR_
 # nothing to do — and we must NOT schedule a fresh latch.
 # ---------------------------------------------------------------------------
 if fw_ufw_is_active && [ -f "$manifest_path" ] && [ "$(cat "$manifest_path")" = "$rendered" ]; then
-  info "ufw already active and rule manifest unchanged — nothing to do"
-  printf '\n[firewall-default-deny] already applied (no changes).\n'
-  exit 0
+  # Also verify IPv6 configuration matches the requested setting
+  persisted_ipv6=$(fw_read_ipv6_choice)
+  if [ "$persisted_ipv6" = "$FW_IPV6" ]; then
+    info "ufw already active and rule manifest unchanged — nothing to do"
+    printf '\n[firewall-default-deny] already applied (no changes).\n'
+    exit 0
+  else
+    info "manifest unchanged but IPv6 setting changed (was $persisted_ipv6, now $FW_IPV6) — proceeding to update"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
-# If ufw is active but the manifest changed, reset to remove stale rules.
+# If ufw is active but the manifest changed or is missing, reset to remove stale rules.
 # ---------------------------------------------------------------------------
-if fw_ufw_is_active && [ -f "$manifest_path" ]; then
-  info "manifest changed — resetting ufw to remove stale rules"
-  "$ONIONARMOR_FW_UFW" disable >/dev/null 2>&1 || die "ufw disable failed before reset — cannot safely proceed"
-  "$ONIONARMOR_FW_UFW" --force reset >/dev/null 2>&1 \
-    || "$ONIONARMOR_FW_UFW" reset >/dev/null 2>&1 \
-    || die "ufw reset failed — cannot apply new rules over stale state"
-  audit_log fw.apply.reset "reason=manifest-changed"
+if fw_ufw_is_active; then
+  needs_reset=0
+  reset_reason=""
+  if [ ! -f "$manifest_path" ]; then
+    needs_reset=1
+    reset_reason="manifest-missing"
+  elif [ "$(cat "$manifest_path")" != "$rendered" ]; then
+    needs_reset=1
+    reset_reason="manifest-changed"
+  fi
+  
+  if [ "$needs_reset" -eq 1 ]; then
+    # Cancel any pending latch before resetting to avoid stale latch firing mid-apply
+    old_job=$(fw_latch_pending)
+    if [ -n "$old_job" ]; then
+      "$ONIONARMOR_FW_ATRM" "$old_job" >/dev/null 2>&1 \
+        && info "cancelled stale safety-latch at job $old_job before reset" \
+        || warn "could not cancel stale safety-latch at job $old_job before reset"
+    fi
+    
+    info "$reset_reason — resetting ufw to remove stale rules"
+    "$ONIONARMOR_FW_UFW" disable >/dev/null 2>&1 || die "ufw disable failed before reset — cannot safely proceed"
+    "$ONIONARMOR_FW_UFW" --force reset >/dev/null 2>&1 \
+      || "$ONIONARMOR_FW_UFW" reset >/dev/null 2>&1 \
+      || die "ufw reset failed — cannot apply new rules over stale state"
+    audit_log fw.apply.reset "reason=$reset_reason"
+  fi
 fi
 
 # ---------------------------------------------------------------------------

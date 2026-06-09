@@ -189,7 +189,7 @@ fw_listeners() {
 fw_bgp_peers() {
   [ -r "$ONIONARMOR_FW_FRR_CONF" ] || return 0
   awk '$1 == "neighbor" && $3 == "remote-as" { print $2 }' "$ONIONARMOR_FW_FRR_CONF" \
-    | grep -E '^[0-9a-fA-F.:]+$' | sort -u
+    | grep -E '^[0-9a-fA-F.:]+$' | sort -u || true
 }
 
 # fw_bgp_bind: echo the bgpd listen IP from /etc/frr/daemons bgpd_options
@@ -197,8 +197,8 @@ fw_bgp_peers() {
 fw_bgp_bind() {
   [ -r "$ONIONARMOR_FW_FRR_DAEMONS" ] || return 0
   local opts
-  opts=$(grep -E '^[[:space:]]*bgpd_options=' "$ONIONARMOR_FW_FRR_DAEMONS" 2>/dev/null | tail -1)
-  printf '%s\n' "$opts" | grep -oE '(-l|-A)[[:space:]]+[0-9a-fA-F.:]+' | awk '{print $2}' | head -1
+  opts=$(grep -E '^[[:space:]]*bgpd_options=' "$ONIONARMOR_FW_FRR_DAEMONS" 2>/dev/null | tail -1 || true)
+  printf '%s\n' "$opts" | grep -oE '(-l|-A)[[:space:]]+[0-9a-fA-F.:]+' | awk '{print $2}' | head -1 || true
 }
 
 # fw_bgp_rules: for a tcp/179 listener, emit the restricted ufw rule spec(s) —
