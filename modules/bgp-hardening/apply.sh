@@ -35,7 +35,7 @@ if [ "$BGP_DO_FIREWALL" -eq 1 ] || [ "$BGP_GTSM" -eq 1 ]; then
   fi
 fi
 
-dropin_daemons=$(bgp_daemons_path)
+dropin_daemons=$ONIONARMOR_BGP_DAEMONS
 peer_list_oneline=$(printf '%s' "$peers" | tr '\n' ' ' | sed 's/[[:space:]]*$//')
 
 # ---------------------------------------------------------------------------

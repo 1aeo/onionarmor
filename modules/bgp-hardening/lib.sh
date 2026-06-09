@@ -175,7 +175,9 @@ EOF
 }
 
 # --- paths ----------------------------------------------------------------
-bgp_daemons_path()        { printf '%s\n' "$ONIONARMOR_BGP_DAEMONS"; }
+# The daemons file is an existing system path ($ONIONARMOR_BGP_DAEMONS, normally
+# /etc/frr/daemons) used directly — unlike the backup/marker paths below, which
+# derive from the module state dir.
 bgp_daemons_backup_path() { printf '%s/daemons.bak\n' "$ONIONARMOR_BGP_STATE_DIR"; }
 bgp_nft_backup_path()     { printf '%s/nftables-%s.bak\n' "$ONIONARMOR_BGP_STATE_DIR" "$BGP_NFT_TABLE"; }
 bgp_rpki_marker_path()    { printf '%s/rpki.applied\n' "$ONIONARMOR_BGP_STATE_DIR"; }
@@ -226,7 +228,7 @@ bgp_resolve_peers() {
 # bgp_daemons_current_options: the current bgpd_options value (without quotes),
 # or empty if there is no bgpd_options line.
 bgp_daemons_current_options() {
-  local f; f=$(bgp_daemons_path)
+  local f=$ONIONARMOR_BGP_DAEMONS
   [ -f "$f" ] || return 0
   sed -n 's/^[[:space:]]*bgpd_options[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$f" | tail -1
 }
@@ -248,8 +250,7 @@ bgp_options_with_bind() {
 # bgp_render_daemons <ip>: emit the full daemons file with bgpd_options carrying
 # `-l <ip>`. Adds a bgpd_options line if the file has none.
 bgp_render_daemons() {
-  local ip=$1 f cur new
-  f=$(bgp_daemons_path)
+  local ip=$1 f=$ONIONARMOR_BGP_DAEMONS cur new
   cur=$(bgp_daemons_current_options)
   new=$(bgp_options_with_bind "$cur" "$ip")
   if grep -qE '^[[:space:]]*bgpd_options[[:space:]]*=' "$f" 2>/dev/null; then
