@@ -64,7 +64,7 @@ apparmor, systemd-sandbox, nftables-egress.
 
 ## Repo layout
 
-```
+```text
 install.sh                     # curl|sudo bash installer (clone + symlink, idempotent)
 bin/onionarmor                 # CLI entrypoint
 bin/check-own-roa-status       # operator helper: report RPKI validity of YOUR prefixes

@@ -6,7 +6,7 @@ trust model. For the fast path, see [Install in the README](../README.md#install
 ## Requirements
 
 - Debian 12+ or Ubuntu 22.04+ (the installer refuses other distros).
-- Kernel ≥ 5.2 (needed for `kernel.unprivileged_bpf_disabled=2`).
+- Kernel ≥ 5.13 (the kernel that introduced `kernel.unprivileged_bpf_disabled=2`, commit `08389d888287`; Debian 12 and Ubuntu 22.04+ both ship newer kernels).
 - `bash` 4+, plus `awk` and `sysctl` (the installer `apt-get install`s anything missing).
 - `root` (the tool writes `/etc`, `/opt`, and `/usr/local/sbin`).
 
@@ -67,7 +67,7 @@ header of [`install.sh`](../install.sh).
 | `INSTALL_PREFIX` | `/opt/onionarmor` | install root |
 | `SYMLINK_PATH` | `/usr/local/sbin/onionarmor` | CLI symlink location |
 | `ONIONARMOR_REPO_REF` | `main` | branch, tag, or commit SHA to check out |
-| `ONIONARMOR_REPO_URL` | upstream | override the git remote |
+| `ONIONARMOR_REPO_URL` | `https://github.com/1aeo/onionarmor.git` | override the git remote |
 | `ONIONARMOR_INSTALL_ROLE` | _(unset)_ | declare role + run a first apply during install |
 | `ONIONARMOR_INSTALL_FORCE` | `0` | on update, discard uncommitted local changes in `$INSTALL_PREFIX` |
 
