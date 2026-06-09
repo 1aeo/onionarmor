@@ -5,7 +5,7 @@ registry is a plain directory scan (see `lib/module.sh`): a directory is a valid
 module **iff** it contains `apply.sh`, `audit.sh`, and `revert.sh`. No manifest,
 no YAML.
 
-```
+```text
 modules/<name>/
   apply.sh          # apply the posture (must support --dry-run); first
                     #   `# MODULE: <text>` comment is the list-modules description
@@ -18,7 +18,7 @@ modules/<name>/
 
 Operators drive every module through the same CLI dispatch:
 
-```
+```sh
 onionarmor apply  --module <name> [module opts]
 onionarmor audit  --module <name> [module opts]
 onionarmor revert --module <name> [module opts]

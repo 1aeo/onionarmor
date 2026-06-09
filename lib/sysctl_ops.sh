@@ -42,7 +42,7 @@ write_managed_sysctl() {
     printf '# To roll back: onionarmor rollback --role %s\n\n' "$role"
     awk '{print $1 " = " $2}' "$pairs"
   } > "$tmp" || { rm -f "$tmp"; warn "cannot write $tmp"; return 1; }
-  mv "$tmp" "$path" || { warn "cannot move $tmp -> $path"; return 1; }
+  mv "$tmp" "$path" || { rm -f "$tmp"; warn "cannot move $tmp -> $path"; return 1; }
 }
 
 # reload_sysctl: ask the kernel to re-read /etc/sysctl.d. Returns the exit
