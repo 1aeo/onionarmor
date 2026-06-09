@@ -77,6 +77,11 @@ for a in "$@"; do
   esac
 done
 printf '%s %s now=%s\n' "$verb" "$unit" "$now" >> "$S/systemctl.log"
+# Failure injection: FAKE_SYSTEMCTL_FAIL holds space-separated verbs that should
+# return nonzero (as real systemctl does on a refused mask/restart/etc.).
+case " ${FAKE_SYSTEMCTL_FAIL:-} " in
+  *" $verb "*) echo "systemctl: $verb $unit failed (injected)" >&2; exit 1 ;;
+esac
 af="$S/active/$unit"; ef="$S/enabled/$unit"
 case "$verb" in
   is-active)  cat "$af" 2>/dev/null || echo inactive ;;

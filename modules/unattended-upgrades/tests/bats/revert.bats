@@ -41,6 +41,14 @@ load test_helper
   [ "$(cat "$STUB_STATE/enabled/unattended-upgrades.service")" = "masked" ]
 }
 
+@test "revert: fails (nonzero) when masking the service fails" {
+  bash "$APPLY" >/dev/null
+  FAKE_SYSTEMCTL_FAIL="mask" run bash "$REVERT"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"could not mask"* ]]
+  [[ "$output" == *"MASK FAILED"* ]]
+}
+
 @test "revert: leaves an unmanaged operator file alone" {
   f50="$ONIONARMOR_UU_APT_CONFD/50unattended-upgrades"
   # operator file present, module never applied (no backup, not managed)

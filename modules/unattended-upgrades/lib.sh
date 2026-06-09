@@ -65,13 +65,13 @@ uu_parse_flags() {
   uu_load_flags  # restore apply-time flags (if saved); CLI overrides below
   while [ $# -gt 0 ]; do
     case "$1" in
-      --distro)              UU_DISTRO=${2:-}; shift 2 ;;
+      --distro)              [ $# -ge 2 ] || die "unattended-upgrades: --distro requires a value"; UU_DISTRO=$2; shift 2 ;;
       --distro=*)            UU_DISTRO=${1#--distro=}; shift ;;
-      --codename)            UU_CODENAME=${2:-}; shift 2 ;;
+      --codename)            [ $# -ge 2 ] || die "unattended-upgrades: --codename requires a value"; UU_CODENAME=$2; shift 2 ;;
       --codename=*)          UU_CODENAME=${1#--codename=}; shift ;;
       --reboot)              UU_REBOOT=1; shift ;;
       --no-reboot)           UU_REBOOT=0; shift ;;
-      --reboot-time)         UU_REBOOT_TIME=${2:-}; shift 2 ;;
+      --reboot-time)         [ $# -ge 2 ] || die "unattended-upgrades: --reboot-time requires a value"; UU_REBOOT_TIME=$2; shift 2 ;;
       --reboot-time=*)       UU_REBOOT_TIME=${1#--reboot-time=}; shift ;;
       --reboot-with-users)   UU_REBOOT_WITH_USERS=1; shift ;;
       --no-reboot-with-users) UU_REBOOT_WITH_USERS=0; shift ;;
@@ -182,6 +182,7 @@ EOF
 uu_load_flags() {
   local state_file
   state_file=$(uu_flags_state_path)
+  # shellcheck disable=SC1090  # state_file is a runtime path, not a constant
   [ -f "$state_file" ] && . "$state_file" || true
 }
 

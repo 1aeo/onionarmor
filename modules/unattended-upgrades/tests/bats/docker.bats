@@ -31,8 +31,11 @@ _run_roundtrip() {
     grep -q "Managed by onionarmor" /etc/apt/apt.conf.d/50unattended-upgrades
     bash modules/unattended-upgrades/audit.sh || true
     bash modules/unattended-upgrades/revert.sh
-    test ! -e /etc/apt/apt.conf.d/50unattended-upgrades \
-      || grep -q "Managed by onionarmor" /etc/apt/apt.conf.d/50unattended-upgrades && false || true
+    # After revert the managed file must be gone (debian:bookworm has no prior
+    # default to restore). If something is left behind, it must NOT be ours.
+    if [ -e /etc/apt/apt.conf.d/50unattended-upgrades ]; then
+      ! grep -q "Managed by onionarmor" /etc/apt/apt.conf.d/50unattended-upgrades
+    fi
   '
 }
 

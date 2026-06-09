@@ -49,13 +49,18 @@ uu_restore_file "$f20"
 # ---------------------------------------------------------------------------
 # Disable + mask the service so nothing re-runs it.
 # ---------------------------------------------------------------------------
-"$ONIONARMOR_UU_SYSTEMCTL" disable --now "$ONIONARMOR_UU_SERVICE" >/dev/null 2>&1 || true
+"$ONIONARMOR_UU_SYSTEMCTL" disable --now "$ONIONARMOR_UU_SERVICE" >/dev/null 2>&1 \
+  || warn "could not disable $ONIONARMOR_UU_SERVICE"
+# Masking is what actually guarantees the service can't run again, so a mask
+# failure means automatic upgrades may still be active — that's not a clean revert.
+mask_ok=0
 if "$ONIONARMOR_UU_SYSTEMCTL" mask "$ONIONARMOR_UU_SERVICE" >/dev/null 2>&1; then
+  mask_ok=1
   info "disabled + masked $ONIONARMOR_UU_SERVICE"
 else
-  warn "could not mask $ONIONARMOR_UU_SERVICE"
+  warn "could not mask $ONIONARMOR_UU_SERVICE — automatic upgrades may still run"
 fi
-audit_log uu.revert.service "masked=$ONIONARMOR_UU_SERVICE"
+audit_log uu.revert.service "masked=$ONIONARMOR_UU_SERVICE mask_ok=$mask_ok"
 
 # Remove the apply-time flags state so the next apply uses defaults.
 flags_state=$(uu_flags_state_path)
@@ -65,14 +70,16 @@ if [ -f "$flags_state" ]; then
   info "removed apply-time flags state"
 fi
 
-audit_log uu.revert.done "ok=1"
+audit_log uu.revert.done "ok=$mask_ok"
 cat <<EOF
 
 [unattended-upgrades] reverted.
   50 config : $f50
   20 config : $f20
-  service   : $ONIONARMOR_UU_SERVICE (disabled + masked)
+  service   : $ONIONARMOR_UU_SERVICE ($([ "$mask_ok" -eq 1 ] && echo "disabled + masked" || echo "MASK FAILED — may still run"))
 
 WARNING: automatic security upgrades are now OFF. Re-apply to restore them:
   onionarmor apply --module unattended-upgrades
 EOF
+
+[ "$mask_ok" -eq 1 ] || { warn "revert did not fully mask $ONIONARMOR_UU_SERVICE — re-run revert"; exit 1; }
