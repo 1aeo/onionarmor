@@ -63,29 +63,36 @@ dns_set_defaults() {
   DNS_VERIFY=1
 }
 
+# dns_need_val <flag> <count>: die unless a value-taking flag was given an
+# argument, guarding `shift 2` from a silent "shift count out of range" abort on
+# a trailing valueless flag. Mirrors krp_need_val / bgp_need_val.
+dns_need_val() {
+  [ "$2" -ge 2 ] || die "dns-posture: $1 requires a value (try --help)"
+}
+
 # dns_parse_flags <args...>: populate DNS_* from the command line. Shared by all
 # three actions (audit/revert ignore the ones that don't apply to them).
 dns_parse_flags() {
   dns_set_defaults
   while [ $# -gt 0 ]; do
     case "$1" in
-      --upstreams)          DNS_UPSTREAMS=${2:-}; shift 2 ;;
+      --upstreams)          dns_need_val "$1" "$#"; DNS_UPSTREAMS=$2; shift 2 ;;
       --upstreams=*)        DNS_UPSTREAMS=${1#--upstreams=}; shift ;;
       --no-dnssec)          DNS_DNSSEC=0; shift ;;
       --dnssec)             DNS_DNSSEC=1; shift ;;
-      --listen)             DNS_LISTEN=${2:-}; shift 2 ;;
+      --listen)             dns_need_val "$1" "$#"; DNS_LISTEN=$2; shift 2 ;;
       --listen=*)           DNS_LISTEN=${1#--listen=}; shift ;;
-      --listen-port)        DNS_LISTEN_PORT=${2:-}; shift 2 ;;
+      --listen-port)        dns_need_val "$1" "$#"; DNS_LISTEN_PORT=$2; shift 2 ;;
       --listen-port=*)      DNS_LISTEN_PORT=${1#--listen-port=}; shift ;;
-      --num-threads)        DNS_NUM_THREADS=${2:-}; shift 2 ;;
+      --num-threads)        dns_need_val "$1" "$#"; DNS_NUM_THREADS=$2; shift 2 ;;
       --num-threads=*)      DNS_NUM_THREADS=${1#--num-threads=}; shift ;;
-      --anchor-file)        DNS_ANCHOR_FILE=${2:-}; shift 2 ;;
+      --anchor-file)        dns_need_val "$1" "$#"; DNS_ANCHOR_FILE=$2; shift 2 ;;
       --anchor-file=*)      DNS_ANCHOR_FILE=${1#--anchor-file=}; shift ;;
       --bootstrap-anchor)   DNS_BOOTSTRAP_ANCHOR=1; shift ;;
       --no-bootstrap-anchor) DNS_BOOTSTRAP_ANCHOR=0; shift ;;
       --mask-resolved)      DNS_MASK_RESOLVED=1; shift ;;
       --no-mask-resolved)   DNS_MASK_RESOLVED=0; shift ;;
-      --resolv-conf)        DNS_RESOLV_CONF=${2:-}; shift 2 ;;
+      --resolv-conf)        dns_need_val "$1" "$#"; DNS_RESOLV_CONF=$2; shift 2 ;;
       --resolv-conf=*)      DNS_RESOLV_CONF=${1#--resolv-conf=}; shift ;;
       --immutable-resolv)   DNS_IMMUTABLE_RESOLV=1; shift ;;
       --dry-run)            DNS_DRY_RUN=1; shift ;;
