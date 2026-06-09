@@ -29,33 +29,54 @@ fi
 # ---------------------------------------------------------------------------
 job=$(fw_latch_pending)
 if [ -n "$job" ]; then
-  "$ONIONARMOR_FW_ATRM" "$job" >/dev/null 2>&1 \
-    && info "cancelled pending safety-latch at job $job" \
-    || warn "could not cancel safety-latch at job $job (atrm $job)"
-  audit_log fw.revert.latch "cancelled=$job"
+  if "$ONIONARMOR_FW_ATRM" "$job" >/dev/null 2>&1; then
+    info "cancelled pending safety-latch at job $job"
+    audit_log fw.revert.latch "cancelled=$job"
+    rm -f "$latch_state" 2>/dev/null || warn "could not remove $latch_state"
+  else
+    warn "could not cancel safety-latch at job $job (atrm $job) — keeping state file for retry"
+  fi
+else
+  rm -f "$latch_state" 2>/dev/null || true
 fi
-rm -f "$latch_state" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # 2. Disable + reset ufw (drops our rules and the default-deny policy).
 # ---------------------------------------------------------------------------
+disable_ok=0
+reset_ok=0
 if command -v "$ONIONARMOR_FW_UFW" >/dev/null 2>&1; then
-  "$ONIONARMOR_FW_UFW" disable >/dev/null 2>&1 \
-    || warn "ufw disable returned nonzero"
-  "$ONIONARMOR_FW_UFW" --force reset >/dev/null 2>&1 \
-    || "$ONIONARMOR_FW_UFW" reset >/dev/null 2>&1 \
-    || warn "ufw reset returned nonzero"
-  audit_log fw.revert.ufw "disabled+reset"
-  info "ufw disabled + reset"
+  if "$ONIONARMOR_FW_UFW" disable >/dev/null 2>&1; then
+    disable_ok=1
+  else
+    warn "ufw disable returned nonzero"
+  fi
+  if "$ONIONARMOR_FW_UFW" --force reset >/dev/null 2>&1 || "$ONIONARMOR_FW_UFW" reset >/dev/null 2>&1; then
+    reset_ok=1
+  else
+    warn "ufw reset returned nonzero"
+  fi
+  if [ "$disable_ok" -eq 1 ] && [ "$reset_ok" -eq 1 ]; then
+    audit_log fw.revert.ufw "disabled+reset"
+    info "ufw disabled + reset"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Remove our managed manifest.
+# 3. Remove auxiliary state (manifest, IPv6 choice) only if reset succeeded.
 # ---------------------------------------------------------------------------
-if [ -f "$manifest_path" ]; then
-  rm -f "$manifest_path" || warn "could not remove $manifest_path"
-  audit_log fw.revert.manifest "removed=$manifest_path"
-  info "removed rule manifest: $manifest_path"
+ipv6_choice_path=$(fw_ipv6_choice_path)
+if [ "$reset_ok" -eq 1 ]; then
+  if [ -f "$manifest_path" ]; then
+    rm -f "$manifest_path" || warn "could not remove $manifest_path"
+    audit_log fw.revert.manifest "removed=$manifest_path"
+    info "removed rule manifest: $manifest_path"
+  fi
+  rm -f "$ipv6_choice_path" 2>/dev/null || true
+else
+  if [ -f "$manifest_path" ]; then
+    warn "keeping manifest $manifest_path (ufw reset failed — retry revert)"
+  fi
 fi
 
 audit_log fw.revert.done "ok=1"

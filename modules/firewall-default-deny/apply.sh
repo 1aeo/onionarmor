@@ -58,25 +58,56 @@ if fw_ufw_is_active && [ -f "$manifest_path" ] && [ "$(cat "$manifest_path")" = 
 fi
 
 # ---------------------------------------------------------------------------
-# 1. Enable IPv6 in /etc/default/ufw BEFORE enabling ufw (so rules cover v6).
+# If ufw is active but the manifest changed, reset to remove stale rules.
 # ---------------------------------------------------------------------------
-if [ "$FW_IPV6" -eq 1 ] && [ -f "$ONIONARMOR_FW_UFW_DEFAULTS" ]; then
-  if ! fw_ipv6_enabled; then
-    # Portable in-place edit (no `sed -i` — BSD vs GNU differ): awk to a temp,
-    # rewriting any IPV6= line to IPV6=yes, else append it.
-    uf_tmp="$ONIONARMOR_FW_UFW_DEFAULTS.tmp.$$"
-    if grep -qiE '^[[:space:]]*IPV6=' "$ONIONARMOR_FW_UFW_DEFAULTS"; then
-      awk '/^[[:space:]]*IPV6=/ { print "IPV6=yes"; next } { print }' \
-        "$ONIONARMOR_FW_UFW_DEFAULTS" > "$uf_tmp" \
-        || { rm -f "$uf_tmp"; die "cannot rewrite $ONIONARMOR_FW_UFW_DEFAULTS"; }
-    else
-      cat "$ONIONARMOR_FW_UFW_DEFAULTS" > "$uf_tmp" || { rm -f "$uf_tmp"; die "cannot read $ONIONARMOR_FW_UFW_DEFAULTS"; }
-      printf 'IPV6=yes\n' >> "$uf_tmp"
+if fw_ufw_is_active && [ -f "$manifest_path" ]; then
+  info "manifest changed — resetting ufw to remove stale rules"
+  "$ONIONARMOR_FW_UFW" disable >/dev/null 2>&1 || warn "ufw disable returned nonzero before reset"
+  "$ONIONARMOR_FW_UFW" --force reset >/dev/null 2>&1 \
+    || "$ONIONARMOR_FW_UFW" reset >/dev/null 2>&1 \
+    || warn "ufw reset returned nonzero"
+  audit_log fw.apply.reset "reason=manifest-changed"
+fi
+
+# ---------------------------------------------------------------------------
+# 1. Configure IPv6 in /etc/default/ufw BEFORE enabling ufw (so rules cover v6).
+# ---------------------------------------------------------------------------
+if [ -f "$ONIONARMOR_FW_UFW_DEFAULTS" ]; then
+  if [ "$FW_IPV6" -eq 1 ]; then
+    if ! fw_ipv6_enabled; then
+      # Portable in-place edit (no `sed -i` — BSD vs GNU differ): awk to a temp,
+      # rewriting any IPV6= line to IPV6=yes, else append it.
+      uf_tmp="$ONIONARMOR_FW_UFW_DEFAULTS.tmp.$$"
+      if grep -qiE '^[[:space:]]*IPV6=' "$ONIONARMOR_FW_UFW_DEFAULTS"; then
+        awk '/^[[:space:]]*IPV6=/ { print "IPV6=yes"; next } { print }' \
+          "$ONIONARMOR_FW_UFW_DEFAULTS" > "$uf_tmp" \
+          || { rm -f "$uf_tmp"; die "cannot rewrite $ONIONARMOR_FW_UFW_DEFAULTS"; }
+      else
+        cat "$ONIONARMOR_FW_UFW_DEFAULTS" > "$uf_tmp" || { rm -f "$uf_tmp"; die "cannot read $ONIONARMOR_FW_UFW_DEFAULTS"; }
+        printf 'IPV6=yes\n' >> "$uf_tmp"
+      fi
+      mv "$uf_tmp" "$ONIONARMOR_FW_UFW_DEFAULTS" \
+        || { rm -f "$uf_tmp"; die "cannot set IPV6=yes in $ONIONARMOR_FW_UFW_DEFAULTS"; }
+      audit_log fw.apply.ipv6 "set=IPV6=yes file=$ONIONARMOR_FW_UFW_DEFAULTS"
+      info "enabled IPv6 in $ONIONARMOR_FW_UFW_DEFAULTS"
     fi
-    mv "$uf_tmp" "$ONIONARMOR_FW_UFW_DEFAULTS" \
-      || { rm -f "$uf_tmp"; die "cannot set IPV6=yes in $ONIONARMOR_FW_UFW_DEFAULTS"; }
-    audit_log fw.apply.ipv6 "set=IPV6=yes file=$ONIONARMOR_FW_UFW_DEFAULTS"
-    info "enabled IPv6 in $ONIONARMOR_FW_UFW_DEFAULTS"
+  else
+    if fw_ipv6_enabled; then
+      # Disable IPv6 when --no-ipv6 is specified
+      uf_tmp="$ONIONARMOR_FW_UFW_DEFAULTS.tmp.$$"
+      if grep -qiE '^[[:space:]]*IPV6=' "$ONIONARMOR_FW_UFW_DEFAULTS"; then
+        awk '/^[[:space:]]*IPV6=/ { print "IPV6=no"; next } { print }' \
+          "$ONIONARMOR_FW_UFW_DEFAULTS" > "$uf_tmp" \
+          || { rm -f "$uf_tmp"; die "cannot rewrite $ONIONARMOR_FW_UFW_DEFAULTS"; }
+      else
+        cat "$ONIONARMOR_FW_UFW_DEFAULTS" > "$uf_tmp" || { rm -f "$uf_tmp"; die "cannot read $ONIONARMOR_FW_UFW_DEFAULTS"; }
+        printf 'IPV6=no\n' >> "$uf_tmp"
+      fi
+      mv "$uf_tmp" "$ONIONARMOR_FW_UFW_DEFAULTS" \
+        || { rm -f "$uf_tmp"; die "cannot set IPV6=no in $ONIONARMOR_FW_UFW_DEFAULTS"; }
+      audit_log fw.apply.ipv6 "set=IPV6=no file=$ONIONARMOR_FW_UFW_DEFAULTS"
+      info "disabled IPv6 in $ONIONARMOR_FW_UFW_DEFAULTS"
+    fi
   fi
 fi
 
@@ -98,19 +129,6 @@ $FW_RULES
 EOF
 audit_log fw.apply.rules "applied=$(printf '%s' "$FW_RULES" | tr '\n' ';')"
 
-# ---------------------------------------------------------------------------
-# 3. Write the managed manifest (idempotent: skip if byte-identical).
-# ---------------------------------------------------------------------------
-if [ -f "$manifest_path" ] && [ "$(cat "$manifest_path")" = "$rendered" ]; then
-  info "manifest already current: $manifest_path"
-else
-  tmp="$manifest_path.tmp.$$"
-  printf '%s\n' "$rendered" > "$tmp" || die "cannot write $tmp"
-  mv "$tmp" "$manifest_path" || { rm -f "$tmp"; die "cannot move $tmp -> $manifest_path"; }
-  audit_log fw.apply.manifest "wrote=$manifest_path"
-  info "wrote rule manifest: $manifest_path"
-fi
-
 # Warn (loudly) about any listener we are about to DENY.
 if [ -n "$FW_UNKNOWN" ]; then
   warn "DENYING unrecognised listener port(s): $FW_UNKNOWN — re-run with --allow <port> to expose any of these"
@@ -118,22 +136,26 @@ if [ -n "$FW_UNKNOWN" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 4. SAFETY LATCH: schedule an at-job to auto-disable ufw + restart ssh, BEFORE
+# 3. SAFETY LATCH: schedule an at-job to auto-disable ufw + restart ssh, BEFORE
 #    we enable, so a wrong SSH rule cannot lock the operator out for good.
+#    Cancel any pending latch first to avoid stacking jobs.
 # ---------------------------------------------------------------------------
 latch_job=""
 if [ "$FW_SAFETY_LATCH" -eq 1 ]; then
   if ! command -v "$ONIONARMOR_FW_AT" >/dev/null 2>&1; then
     die "firewall-default-deny: 'at' not found — needed for the SSH safety latch. Install it (apt install at) or re-run with --no-safety-latch (console access required)."
   fi
+  # Cancel any existing latch before scheduling a new one
+  old_job=$(fw_latch_pending)
+  if [ -n "$old_job" ]; then
+    "$ONIONARMOR_FW_ATRM" "$old_job" >/dev/null 2>&1 \
+      && info "cancelled previous safety-latch at job $old_job" \
+      || warn "could not cancel previous safety-latch at job $old_job"
+  fi
   latch_cmd="$ONIONARMOR_FW_UFW disable && $ONIONARMOR_FW_SYSTEMCTL restart $ONIONARMOR_FW_SSH_UNIT"
   latch_out=$(printf '%s\n' "$latch_cmd" | "$ONIONARMOR_FW_AT" now + "$FW_LATCH_MIN" minutes 2>&1 || true)
   latch_job=$(printf '%s\n' "$latch_out" | grep -oE 'job[[:space:]]+[0-9]+' | awk '{print $2}' | head -1)
-  if [ -n "$latch_job" ]; then
-    printf '%s\n' "$latch_job" > "$latch_state"
-    audit_log fw.apply.latch "job=$latch_job minutes=$FW_LATCH_MIN"
-    info "scheduled safety latch (at job $latch_job): auto-disable in $FW_LATCH_MIN min"
-  else
+  if [ -z "$latch_job" ]; then
     warn "could not parse the at job id (latch may not be scheduled): $latch_out"
   fi
 else
@@ -141,10 +163,41 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Enable ufw (now that rules + latch are in place).
+# 4. Enable ufw (now that rules + latch are in place).
 # ---------------------------------------------------------------------------
 "$ONIONARMOR_FW_UFW" --force enable >/dev/null 2>&1 \
   || { audit_log fw.apply.fail "stage=enable"; die "ufw --force enable failed — firewall NOT active"; }
+
+# ---------------------------------------------------------------------------
+# 5. Write auxiliary state (manifest, latch, IPv6 choice) AFTER enable succeeds.
+#    Best-effort: warn but return 0 on failure (primary operation already done).
+# ---------------------------------------------------------------------------
+ipv6_choice_path=$(fw_ipv6_choice_path)
+if ! printf '%s\n' "$FW_IPV6" > "$ipv6_choice_path" 2>/dev/null; then
+  warn "could not write IPv6 choice to $ipv6_choice_path"
+fi
+
+if [ -n "$latch_job" ]; then
+  if printf '%s\n' "$latch_job" > "$latch_state" 2>/dev/null; then
+    audit_log fw.apply.latch "job=$latch_job minutes=$FW_LATCH_MIN"
+    info "scheduled safety latch (at job $latch_job): auto-disable in $FW_LATCH_MIN min"
+  else
+    warn "could not write latch state to $latch_state (job $latch_job is queued but not tracked)"
+  fi
+fi
+
+if [ -f "$manifest_path" ] && [ "$(cat "$manifest_path")" = "$rendered" ]; then
+  info "manifest already current: $manifest_path"
+else
+  tmp="$manifest_path.tmp.$$"
+  if printf '%s\n' "$rendered" > "$tmp" 2>/dev/null && mv "$tmp" "$manifest_path" 2>/dev/null; then
+    audit_log fw.apply.manifest "wrote=$manifest_path"
+    info "wrote rule manifest: $manifest_path"
+  else
+    rm -f "$tmp" 2>/dev/null
+    warn "could not write manifest to $manifest_path"
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # 6. Verify (default on): ufw reports active.

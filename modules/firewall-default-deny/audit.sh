@@ -54,6 +54,16 @@ else
 fi
 
 # --- 3. IPv6 enabled ------------------------------------------------------
+# Read the persisted IPv6 choice from apply if available
+ipv6_choice=$(fw_read_ipv6_choice)
+if [ -n "$ipv6_choice" ]; then
+  # Use the persisted choice from apply, unless overridden by --no-ipv6 flag
+  if [ "$FW_IPV6" -eq 1 ] && [ "$ipv6_choice" = "0" ]; then
+    # Apply was v4-only, audit didn't override → use apply's choice
+    FW_IPV6=0
+  fi
+fi
+
 if fw_ipv6_enabled; then
   fw_check green "IPv6 enabled" "IPV6=yes in $(basename "$ONIONARMOR_FW_UFW_DEFAULTS")"
 elif [ "$FW_IPV6" -eq 0 ]; then
