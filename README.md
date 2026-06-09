@@ -1,112 +1,109 @@
 # onionarmor
 
-**Apply hardening recommendations to Ubuntu/Debian relay fleets — idempotently, with backup and rollback.**
+> **Apply kernel + network hardening to Ubuntu/Debian Tor-relay fleets — idempotently, with a backup and one-command rollback for every change.**
 
-`onionarmor` is the apply-side counterpart to two read-only sister tools:
+`onionarmor` is a single self-contained Bash CLI. Everything it can harden
+follows the same three verbs, so nothing it does is one-way:
 
-| Tool | Role | Touches host? |
-|---|---|---|
-| [`onionwarden`](https://github.com/1aeo/onionwarden) | Monitor / detect drift in kernel + network posture | **No** (read-only) |
-| [`onionleak`](https://github.com/1aeo/onionleak) | Audit Tor-relay metadata for unintended disclosures | **No** (read-only) |
-| **`onionarmor`** (this repo) | **Apply** the hardening recommendations onionwarden surfaces | **Yes** — sysctls + GRUB cmdline, with safety rails |
+- **`apply`** — put a posture in place (backs up what it replaces first),
+- **`audit`** — check whether it's still in place (green / yellow / red),
+- **`revert`** / **`rollback`** — undo it from the backup.
 
-The sharp scope boundary is intentional: onionwarden tells you what's drifting from CIS / RHEL-STIG / kernel-doc recommendations; onionarmor closes the gap. Recommendations are sourced from onionwarden's reference data (see [Reference data](#reference-data) below) and pinned to this repo's role configs, so any change upstream doesn't silently change apply behaviour.
+It's the apply-side of a read-only monitoring pair: [`onionwarden`](https://github.com/1aeo/onionwarden)
+detects drift from CIS / RHEL-STIG / kernel-doc baselines, and onionarmor closes
+the gap — deliberately, never automatically. → [Why a separate tool](docs/architecture.md#why-a-separate-apply-tool)
 
-## Status
+## Contents
 
-Phase 1 — sysctl tunings (25 keys, three role profiles) **plus a modular hardening system**. Kernel-lockdown via GRUB cmdline is documented and stageable but never applied by `apply` (separate `apply-lockdown` subcommand).
-
-The first modules are [`dns-posture`](modules/dns-posture/README.md) — the 1aeo fleet's DoT + DNSSEC + `unbound` posture (systemd-resolved masked); [`kernel-reserved-ports`](modules/kernel-reserved-ports/README.md) — reserving a relay's loopback service ports from the kernel ephemeral source-port pool so an outbound connection can't steal a port tor needs to bind; and [`bgp-hardening`](modules/bgp-hardening/README.md) — FRR `bgpd` listener-bind for hosts that run BGP (with opt-in `tcp/179` firewalling, RPKI, and GTSM). The module convention generalizes to the Phase 2 roadmap (apparmor, systemd-sandbox, nftables-egress).
+- [Install](#install)
+- [Quick start (5 minutes)](#quick-start-5-minutes)
+- [Try a module: dns-posture](#try-a-module-dns-posture)
+- [Commands](#commands)
+- [Roles](#roles) · [Modules](#modules) · [Safety rails](#safety-rails)
+- [Docs](#docs)
 
 ## Install
-
-### One-liner (recommended)
 
 ```sh
 curl -sSL https://raw.githubusercontent.com/1aeo/onionarmor/main/install.sh | sudo bash
 ```
 
-> **Supply-chain note.** This pipes branch-tip (`main`) code straight into
-> `sudo bash`, which is convenient but non-reproducible. To pin and review a
-> fixed revision before running it as root:
->
-> ```sh
-> curl -sSLO https://raw.githubusercontent.com/1aeo/onionarmor/<tag-or-sha>/install.sh
-> less install.sh                                  # review before running
-> sudo ONIONARMOR_REPO_REF=<tag-or-sha> bash install.sh
-> ```
+Idempotent and conservative: it installs onionarmor onto `PATH` but **never**
+applies a posture or touches the kernel on its own — that stays a deliberate
+operator step. Prefer to pin and review a revision before running as root, or
+install manually? → [Install guide](docs/install.md)
 
-The installer is conservative and idempotent (safe to re-run). It:
+## Quick start (5 minutes)
 
-- refuses to run as non-root, on a non-Debian/Ubuntu distro, on too-old a bash, or on a kernel too old for the role sysctl keys (≥ 5.2);
-- `apt-get install`s any missing prerequisites;
-- clones (or updates) the repo into `/opt/onionarmor` and symlinks `onionarmor` onto `PATH` at `/usr/local/sbin/onionarmor`;
-- **never** applies a role posture on its own and **never** stages GRUB kernel lockdown — both stay deliberate, opt-in operator steps (see [Safety rails](#safety-rails)). It only prints the next steps.
-
-To also apply a role in the same run (declares the host role + runs `apply --first-run`), set `ONIONARMOR_INSTALL_ROLE`:
+Everything in steps 1–3 is **read-only** — look before you touch.
 
 ```sh
-curl -sSL https://raw.githubusercontent.com/1aeo/onionarmor/main/install.sh \
-  | sudo ONIONARMOR_INSTALL_ROLE=tor-relay bash
-```
-
-Common knobs: `INSTALL_PREFIX` (default `/opt/onionarmor`), `SYMLINK_PATH` (default `/usr/local/sbin/onionarmor`), `ONIONARMOR_REPO_REF` (default `main`; accepts a branch, tag, or commit SHA), `ONIONARMOR_INSTALL_FORCE` (default `0`; set to `1` to discard uncommitted local changes in `$INSTALL_PREFIX` when updating an existing checkout). See the header of [`install.sh`](install.sh) for the full list.
-
-### Manual
-
-`onionarmor` is a self-contained Bash CLI. Clone and put `bin/` on `PATH`:
-
-```sh
-git clone https://github.com/1aeo/onionarmor.git /opt/onionarmor
-sudo ln -s /opt/onionarmor/bin/onionarmor /usr/local/sbin/onionarmor
-```
-
-> **Pin and review before you run.** `onionarmor` mutates host state as root, so
-> don't track branch tip blindly. Check out a reviewed tag or commit SHA and
-> inspect the diff before putting `bin/` on `PATH`:
->
-> ```sh
-> git -C /opt/onionarmor checkout <tag-or-sha>   # pin to a reviewed revision
-> ```
-
-No dependencies beyond a POSIX shell, `awk`, `sysctl`, and (for the optional CI lint) `shellcheck`.
-
-## Quickstart — tor-relay
-
-```sh
-# 1. Declare the host's role (one-time, manual step).
+# 1. Declare this host's role once (a safety cross-check, see Safety rails).
 sudo mkdir -p /etc/onionarmor
 echo 'role=tor-relay' | sudo tee /etc/onionarmor/role.conf
 
-# 2. Inspect the target posture.
-onionarmor list --role tor-relay
+# 2. See the target posture, then how the live kernel differs (read-only).
+onionarmor list --role tor-relay        # the 25 target sysctls + values
+onionarmor diff --role tor-relay        # marks each key ok / DRIFT / missing
 
-# 3. See what would change vs the live kernel.
-onionarmor diff --role tor-relay
-
-# 4. Dry-run an apply (no host change).
+# 3. Preview the apply — changes nothing.
 sudo onionarmor apply --role tor-relay --dry-run
 
-# 5. First-time apply (interactive confirmation).
+# 4. Apply for real (first time asks for an interactive 'yes').
 sudo onionarmor apply --role tor-relay --first-run
 
-# 6. (Optional, separate.) Stage kernel lockdown for next reboot.
-sudo onionarmor apply-lockdown
-# Reboots are never automatic — `onionarmor` only edits /etc/default/grub
-# and runs update-grub; you reboot when convenient.
-
-# 7. If anything misbehaves, roll back to the previous managed file.
-sudo onionarmor rollback --role tor-relay
-
-# 8. Review every change ever made on this host.
+# 5. Review every change ever made on this host.
 sudo onionarmor audit
+
+# 6. Changed your mind? Roll back to the previous managed file.
+sudo onionarmor rollback --role tor-relay
 ```
 
-Subsequent applies (after the first) don't need `--first-run`:
+After the first apply, subsequent applies don't need `--first-run`:
+`sudo onionarmor apply --role tor-relay`.
+
+> Pick the role that matches the host: `tor-relay`, `eval-host`, or `receiver`.
+> They differ only in a couple of exceptions. → [Roles](docs/roles.md)
+
+## Try a module: dns-posture
+
+Modules are optional, self-contained postures applied with `--module`. The same
+`apply` / `audit` / `revert` rhythm applies — and every module previews itself
+with `--dry-run`. Here's the full safe loop on `dns-posture` (a local validating
+DNS-over-TLS resolver):
 
 ```sh
-sudo onionarmor apply --role tor-relay
+# 1. Preview — prints the full plan + rendered config, changes nothing.
+sudo onionarmor apply --module dns-posture --dry-run
+
+# 2. Apply it.
+sudo onionarmor apply --module dns-posture
+
+# 3. Check status any time (exits non-zero if anything is red).
+onionarmor audit --module dns-posture
 ```
+
+```text
+$ onionarmor audit --module dns-posture
+
+[ ok ] unbound active             systemctl is-active unbound = active
+[ ok ] single trust anchor        exactly 1 auto-trust-anchor-file
+[ ok ] resolv.conf pinned         real file, nameserver 127.0.0.1
+[ ok ] systemd-resolved masked    is-enabled = masked
+[ ok ] forwarders DoT-only        all forward-addr are @853
+[ ok ] DNSSEC ad flag             validating answer carries the ad flag
+
+onionarmor: audit: all green
+```
+
+```sh
+# 4. Don't want it? One command puts everything back
+#    (restores resolv.conf, unmasks systemd-resolved).
+sudo onionarmor revert --module dns-posture
+```
+
+Every default (upstreams, DNSSEC, listener, masking) is overridable.
+→ [dns-posture README](modules/dns-posture/README.md) · [all modules](#modules)
 
 ## Commands
 
@@ -114,135 +111,66 @@ sudo onionarmor apply --role tor-relay
 |---|---|
 | `list --role <r>` | Print the role's 25 target sysctls + values (read-only). |
 | `diff --role <r>` | Show current host values vs target; mark each `ok` / `DRIFT` / `missing`. |
-| `apply --role <r>` `[--dry-run]` `[--first-run]` | Apply target sysctls. Backs up the prior managed file, writes `/etc/sysctl.d/99-onionarmor-<r>.conf`, calls `sysctl --system`, audits every change. |
-| `rollback --role <r>` | Restore the most recent backup of the managed file and reload sysctls. |
+| `apply --role <r>` `[--dry-run]` `[--first-run]` | Apply the role's sysctls. Backs up the prior managed file, writes the new one, runs `sysctl --system`, audits the change. |
+| `rollback --role <r>` | Restore the most recent backup of the managed file and reload. |
 | `audit` | Print the full audit log (every apply / rollback ever). |
-| `apply-lockdown` `[--no-reboot]` | Stage `lockdown=integrity` in GRUB cmdline. Prints a REBOOT REQUIRED warning by default; `--no-reboot` suppresses the warning but still requires a reboot to activate. Never auto-reboots. |
-| `list-modules` | List installed hardening modules + descriptions. |
-| `apply --module <m>` / `audit --module <m>` / `revert --module <m>` | Apply / status / undo a [module](#modules). `audit --module` exits non-zero if any check is red. |
-| `help` | Show usage. |
+| `apply-lockdown` `[--no-reboot]` | Stage `lockdown=integrity` in the GRUB cmdline (needs a reboot — never auto-reboots). |
+| `list-modules` | List installed hardening modules + one-line descriptions. |
+| `apply` / `audit` / `revert` `--module <m>` | Apply / status / undo a [module](#modules). |
+| `help` | Show usage. Add `--help` after `--module <m>` for that module's flags. |
 
 ## Roles
 
-Each role is a complete posture (all 25 sysctls), not just a delta:
+A **role** is a complete kernel-sysctl posture (all 25 tracked keys, not a
+delta). Declare one per host; onionarmor keeps it converged.
 
-| Role | File | Sysctls | Role-specific exceptions |
-|---|---|---|---|
-| `tor-relay` | [`roles/tor-relay.conf`](roles/tor-relay.conf) | 25 | None — full baseline. |
-| `eval-host` | [`roles/eval-host.conf`](roles/eval-host.conf) | 25 | `kernel.kexec_load_disabled=0` (nested KVM workloads). |
-| `receiver` | [`roles/receiver.conf`](roles/receiver.conf) | 25 | Recommend also running `apply-lockdown` after `apply`. |
+| Role | For | Exception vs baseline |
+|---|---|---|
+| `tor-relay` | a Tor relay | none — the full baseline |
+| `eval-host` | a model-eval / GPU host | allows `kexec` (nested-KVM workloads) |
+| `receiver` | a consensus/metrics receiver | also recommends `apply-lockdown` |
 
-Each sysctl in a role config carries:
-
-- `# DOC:` — plain-English explanation of what the setting does.
-- `# REF:` — rationale source (CIS Debian 12, RHEL 9 STIG, Linux kernel docs).
-- `# COMPAT:` — known compatibility gotchas ("breaks perf-record annotate", etc.).
+Each key in a role file carries `# DOC:` (what it does), `# REF:` (CIS / STIG /
+kernel-doc source), and `# COMPAT:` (gotchas). → [Roles guide](docs/roles.md)
 
 ## Modules
 
-Beyond the sysctl roles, onionarmor ships **modules** — self-contained hardening postures applied with `--module`:
+Optional postures beyond the sysctl roles. Always dry-run first; every module's
+`audit` exits non-zero if anything is red.
 
-```sh
-onionarmor list-modules                          # discover installed modules
-sudo onionarmor apply  --module dns-posture      # apply a posture
-onionarmor      audit  --module dns-posture      # green/yellow/red status (non-zero exit if red)
-sudo onionarmor revert --module dns-posture      # undo it
-sudo onionarmor apply  --module dns-posture --dry-run   # preview, change nothing
-```
+| Module | What it does | Risk | Needs |
+|---|---|---|---|
+| [`dns-posture`](modules/dns-posture/README.md) | Local validating DoT + DNSSEC resolver (`unbound`); masks `systemd-resolved`. | Medium — replaces the system resolver (clean revert) | `unbound` (auto-installed) |
+| [`kernel-reserved-ports`](modules/kernel-reserved-ports/README.md) | Reserve the relay's loopback tor ports from the kernel ephemeral pool so an outbound connection can't steal one. | Low — one sysctl drop-in, fully reversible | reads your torrc (`--auto`) |
+| [`bgp-hardening`](modules/bgp-hardening/README.md) | Bind FRR `bgpd` to a specific peer-facing IP; opt-in `tcp/179` firewall, RPKI, GTSM. | Medium — restarts `bgpd` (graceful) | FRR under `/etc/frr` |
 
-A module lives under `modules/<name>/` and provides `apply.sh`, `audit.sh`, `revert.sh`, a `README.md`, and `tests/bats/`. The registry is a **directory scan** — a directory is a module iff it has those three action scripts; `list-modules` reads each module's one-line description from the `# MODULE:` header in `apply.sh`. (No manifest file to drift from the real scripts.) See [`lib/module.sh`](lib/module.sh) for the convention.
-
-| Module | What it does | Docs |
-|---|---|---|
-| [`dns-posture`](modules/dns-posture/README.md) | Local validating DoT resolver (`unbound` + DNSSEC), `systemd-resolved` masked, `resolv.conf` pinned. Every default (upstreams, DNSSEC, listener, threads, masking) is overridable. | [README](modules/dns-posture/README.md) |
-| [`kernel-reserved-ports`](modules/kernel-reserved-ports/README.md) | Reserve the relay's loopback service ports (`MetricsPort`/`ControlPort`/…) from the kernel ephemeral source-port pool via `net.ipv4.ip_local_reserved_ports`, so an outbound connection can't steal a port tor needs to bind. Auto-detects ports from torrc (`--auto`). | [README](modules/kernel-reserved-ports/README.md) |
-| [`bgp-hardening`](modules/bgp-hardening/README.md) | For hosts running FRR BGP: bind `bgpd` to a specific peer-facing IP (not `0.0.0.0`) — the default. Opt-in `tcp/179` firewall (`--enable-firewall`), RPKI origin validation (`--enable-rpki`; minimal value for a single-homed stub AS — see its README), and GTSM. Auto-detects bind IP + peers from `/etc/frr`. | [README](modules/bgp-hardening/README.md) |
-
-Module `apply`/`audit`/`revert` all write to the same tamper-evident audit log as the role-based commands. `apply --module <name>` and the role-based `apply --role <name>` are distinct paths — `--module` routes to the module, everything else is unchanged.
+→ [How modules work + authoring guide](docs/modules.md)
 
 ## Safety rails
 
-1. **No `apply` without `--role` set.** The CLI refuses if you omit it.
-2. **Host role.conf cross-check.** `apply` and `rollback` refuse unless `/etc/onionarmor/role.conf` contains `role=<r>` matching the `--role` flag. This prevents applying a `tor-relay` posture to a workstation by mistake.
-3. **Backup before every write.** The prior `/etc/sysctl.d/99-onionarmor-<r>.conf` is copied to `…conf.bak.<UTC-ts>` before the new one is written. Any historical backup can be restored manually; `rollback` restores the most recent.
-4. **First-run confirmation.** `apply --first-run` requires interactive `yes` before writing. Subsequent applies are direct.
-5. **Convergent.** Re-running `apply` with no role-config change preserves the same sysctl posture and writes zero `apply.change` audit entries. (The managed file is rewritten with a fresh `Written:` header timestamp, so the bytes are not guaranteed identical — the *posture* is.)
-6. **Reboot-required items gated.** Kernel lockdown is never applied by `apply`; only `apply-lockdown` stages it. `apply-lockdown` itself never auto-reboots.
-7. **Append-only audit log.** Every apply, backup, and rollback is appended to `/var/log/onionarmor/audit.log` with timestamp, operator, and details. It is a plain operator trail, not cryptographically tamper-evident (no hash chaining or signing) — see [SECURITY.md](SECURITY.md).
+1. **No `apply` without `--role`** — and the host's `/etc/onionarmor/role.conf`
+   must declare that same role (so a relay posture can't land on a workstation).
+2. **Backup before every write**, with timestamped `.bak` files; `rollback`
+   restores the latest.
+3. **First-run confirmation** — `apply --first-run` needs an interactive `yes`.
+4. **Convergent & idempotent** — re-applying with no config change is a no-op.
+5. **Reboot-gated items stay manual** — kernel lockdown is never applied by
+   `apply`, and `apply-lockdown` never auto-reboots.
+6. **Append-only audit log** at `/var/log/onionarmor/audit.log` (a plain
+   operator trail, not cryptographically signed).
 
-## Reference data
+→ [Full safety-rail details](docs/architecture.md#safety-rails-full-list) · [SECURITY.md](SECURITY.md)
 
-The canonical recommendations are derived from two upstream sources in the onionwarden repository:
+## Docs
 
-- `onionwarden:lib/checks/kernel_state.sh` — the `REFERENCE` comment block defines the 25 security-relevant sysctls onionwarden tracks (CIS Debian 12 / RHEL 9 STIG / Linux kernel docs).
-- onionwarden's snapshot reports (`snapshots/<host>/SNAPSHOT_RUN_REPORT.md` §3) — the live-vs-recommended table per snapshot.
-
-We **pin** the values in this repo's role configs rather than reading onionwarden's sources at runtime, so an upstream change to the reference list doesn't silently change onionarmor's apply behaviour.
-
-## Tests
-
-```sh
-bats tests/
-```
-
-The core suite spins up a sandbox tree, swaps in a `fake-sysctl` fixture, and runs every CLI surface (`list`, `diff`, `apply --dry-run`, `apply`, `apply` twice (idempotency), `rollback`, `audit`, `apply-lockdown`, plus `list-modules` + module dispatch) plus a full round-trip.
-
-`tests/install.bats` is a separate, self-contained regression suite for the curl-friendly [`install.sh`](install.sh): it stubs `apt-get`/`git`/`dpkg-query` so it stays fully offline, then exercises the OS / root / bash / kernel gates, the apt-skip and apt-failure paths, idempotency + partial prior-install state, the symlink + `/opt/onionarmor` layout, and the safety rails (never writes `role.conf` by default, never stages GRUB lockdown).
-
-Each module also has its own offline suite (external commands stubbed):
-
-```sh
-bats tests/                          # core CLI + module dispatch
-bats modules/*/tests/bats/           # per-module suites (e.g. dns-posture)
-```
-
-The `dns-posture` suite includes a regression for the duplicate-anchor bug: `audit` must return red on two `auto-trust-anchor-file` lines, and `apply` must produce a config `unbound-checkconf` accepts.
-
-CI runs the core, install, and module suites on `ubuntu-latest` and `ubuntu-22.04` via GitHub Actions, plus `shellcheck` over `bin/`, `lib/`, `install.sh`, and `modules/*/*.sh`; see [`.github/workflows/tests.yml`](.github/workflows/tests.yml).
-
-## Repo layout
-
-```
-install.sh                     # curl|sudo bash installer (clone + symlink, idempotent)
-bin/onionarmor                 # CLI entrypoint
-lib/common.sh                  # paths, logging, audit log, confirmation prompt
-lib/role.sh                    # role config parsing + host role.conf validation
-lib/sysctl_ops.sh              # current/target read, managed-file write, backups
-lib/module.sh                  # module registry + apply/audit/revert dispatch
-roles/tor-relay.conf           # 25-key tor-relay posture
-roles/eval-host.conf           # 25-key eval-host posture (kexec exception)
-roles/receiver.conf            # 25-key receiver posture
-modules/dns-posture/           # DoT + DNSSEC + unbound module
-  apply.sh audit.sh revert.sh  #   the three action scripts
-  lib.sh                       #   shared helpers (env-overridable cmds/paths)
-  README.md                    #   flags, examples, threat model
-  tests/bats/                  #   offline module suite (stubbed externals)
-modules/kernel-reserved-ports/ # reserve loopback tor ports from ephemeral pool
-  apply.sh audit.sh revert.sh  #   the three action scripts
-  lib.sh                       #   torrc auto-detect + range compaction helpers
-  README.md                    #   flags, examples, threat model
-  tests/bats/                  #   offline module suite (stubbed sysctl)
-modules/bgp-hardening/         # FRR bgpd listener-bind (default) + opt-in fw/RPKI/GTSM
-  apply.sh audit.sh revert.sh  #   the three action scripts
-  lib.sh                       #   FRR auto-detect + nft/RPKI/version helpers
-  README.md                    #   flags, examples, threat model
-  tests/bats/                  #   offline module suite (stubbed vtysh/nft/ss)
-bin/check-own-roa-status       # operator helper: report RPKI validity of YOUR prefixes
-tests/*.bats                   # core bats suite (CLI surfaces, incl. modules.bats dispatch)
-tests/install.bats             # bats regression suite for install.sh
-tests/test_helper.bash         # sandbox setup
-tests/fixtures/fake-sysctl     # stub sysctl driver for tests
-tests/fixtures/debian13-relay-baseline.state  # synthetic Debian-13 starting posture
-.github/workflows/tests.yml    # CI: bats (core + modules) + shellcheck
-```
-
-## Why a separate apply tool?
-
-The original onionwarden design note (snapshot §5 "Actionable items") says explicitly:
-
-> Onionwarden surfaces; operator applies if/when desired. Each item below is a state of the host that an operator may want to change. None are auto-applied; this is a monitoring tool.
-
-That split is deliberate — a monitor that also mutates blurs the trust model and the blast radius. `onionarmor` is the explicitly opt-in mutator: separate binary, separate review, separate audit log.
+| Doc | What's in it |
+|---|---|
+| [Install guide](docs/install.md) | One-liner, manual install, pinning a revision, env knobs, uninstall. |
+| [Roles](docs/roles.md) | The three roles, role-file format, the 25 sysctls, reference data. |
+| [Modules](docs/modules.md) | How modules work, the catalog, reading audit output, authoring a module. |
+| [Troubleshooting](docs/troubleshooting.md) | The common first-run snags and their fixes. |
+| [Architecture](docs/architecture.md) | The three-tool split, status/roadmap, safety rails, repo layout, tests. |
+| [SECURITY.md](SECURITY.md) | Threat model and the audit log's guarantees. |
 
 ## License
 
