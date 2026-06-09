@@ -54,16 +54,20 @@ if [ "$KRP_AUTO" -eq 1 ] && [ -z "$dropin_val" ]; then
 elif [ "$KRP_AUTO" -eq 1 ]; then
   # Compare the CURRENT auto-detected tor ports against what the drop-in
   # actually reserves — surfacing drift (e.g. new instances added since apply).
-  uncovered=$(krp_detect_ports | sort -n -u | krp_uncovered_ports "$dropin_val")
-  detected=$(krp_detect_ports | sort -n -u | wc -l | tr -d ' ')
-  if [ "$detected" -eq 0 ]; then
+  # Detect once; an empty list means there is nothing to cover.
+  detected_ports=$(krp_detect_ports | sort -n -u)
+  if [ -z "$detected_ports" ]; then
     oa_status_check yellow "tor ports covered" "no loopback tor ports detected in torrc (nothing to cover)"
-  elif [ -z "$uncovered" ]; then
-    oa_status_check green "tor ports covered" "all $detected detected loopback tor port(s) inside the reservation"
   else
-    gap=$(printf '%s\n' "$uncovered" | krp_compact_ports "$KRP_CLUSTER_GAP" | krp_pairs_to_csv)
-    nun=$(printf '%s\n' "$uncovered" | grep -c .)
-    oa_status_check red "tor ports covered" "drift: $nun tor port(s) NOT reserved ($gap) — reservation is '$dropin_val'"
+    detected=$(printf '%s\n' "$detected_ports" | grep -c .)
+    uncovered=$(printf '%s\n' "$detected_ports" | krp_uncovered_ports "$dropin_val")
+    if [ -z "$uncovered" ]; then
+      oa_status_check green "tor ports covered" "all $detected detected loopback tor port(s) inside the reservation"
+    else
+      gap=$(printf '%s\n' "$uncovered" | krp_compact_ports "$KRP_CLUSTER_GAP" | krp_pairs_to_csv)
+      nun=$(printf '%s\n' "$uncovered" | grep -c .)
+      oa_status_check red "tor ports covered" "drift: $nun tor port(s) NOT reserved ($gap) — reservation is '$dropin_val'"
+    fi
   fi
 else
   oa_status_check yellow "tor ports covered" "pass --auto to cross-check torrc ports against the reservation"
