@@ -3,6 +3,19 @@
 The most common first-run snags, and how to clear them. Every fix here is safe
 to re-run — onionarmor is idempotent.
 
+## `onionarmor: command not found` right after install
+
+The installer symlinks the CLI into `/usr/local/sbin`, which is on **root's**
+`PATH` but not always on a regular user's. The commands that change the host
+already use `sudo` (so they find it), but the read-only `list` / `diff` don't.
+Either run them with `sudo`, use the full path, or add `sbin` to your `PATH`:
+
+```sh
+sudo onionarmor list --role tor-relay         # always works
+/usr/local/sbin/onionarmor list --role tor-relay
+export PATH="/usr/local/sbin:$PATH"           # add to ~/.profile to make it stick
+```
+
 ## `apply` says role mismatch / refuses to run
 
 ```
