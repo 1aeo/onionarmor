@@ -16,6 +16,10 @@ uu_parse_flags "$@"
 f50=$(uu_50_path)
 f20=$(uu_20_path)
 
+# Persist the apply-time flags so audit can re-render with the same posture.
+mkdir -p "$ONIONARMOR_UU_STATE_DIR" || die "cannot create state dir"
+uu_save_flags || die "cannot save apply-time flags"
+
 # ---------------------------------------------------------------------------
 # Dry run: print the plan + rendered config, change nothing.
 # ---------------------------------------------------------------------------

@@ -62,6 +62,7 @@ uu_set_defaults() {
 # three actions (audit/revert ignore the ones that don't apply to them).
 uu_parse_flags() {
   uu_set_defaults
+  uu_load_flags  # restore apply-time flags (if saved); CLI overrides below
   while [ $# -gt 0 ]; do
     case "$1" in
       --distro)              UU_DISTRO=${2:-}; shift 2 ;;
@@ -153,6 +154,32 @@ uu_20_path() { printf '%s/%s\n' "$ONIONARMOR_UU_APT_CONFD" "$ONIONARMOR_UU_20_NA
 
 # uu_backup_path <basename> -> the state-dir backup path for a managed file.
 uu_backup_path() { printf '%s/%s.orig\n' "$ONIONARMOR_UU_STATE_DIR" "$1"; }
+
+# uu_flags_state_path -> the state file that records apply-time flags.
+uu_flags_state_path() { printf '%s/apply-flags.state\n' "$ONIONARMOR_UU_STATE_DIR"; }
+
+# uu_save_flags: persist the current UU_* flags to the state file so audit can
+# re-render the posture with the same flags apply used.
+uu_save_flags() {
+  local state_file
+  state_file=$(uu_flags_state_path)
+  mkdir -p "$ONIONARMOR_UU_STATE_DIR" || return 1
+  cat > "$state_file" <<EOF
+UU_DISTRO=$UU_DISTRO
+UU_CODENAME=$UU_CODENAME
+UU_REBOOT=$UU_REBOOT
+UU_REBOOT_TIME=$UU_REBOOT_TIME
+UU_REBOOT_WITH_USERS=$UU_REBOOT_WITH_USERS
+EOF
+}
+
+# uu_load_flags: source the apply-time flags from the state file (if present).
+# Call after uu_set_defaults so defaults are in place for first-run audit.
+uu_load_flags() {
+  local state_file
+  state_file=$(uu_flags_state_path)
+  [ -f "$state_file" ] && . "$state_file" || true
+}
 
 # uu_origins_block: emit the Origins-Pattern entries for the resolved distro,
 # one indented quoted line each. Security archives only — never -updates.
