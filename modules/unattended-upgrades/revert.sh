@@ -57,6 +57,14 @@ else
 fi
 audit_log uu.revert.service "masked=$ONIONARMOR_UU_SERVICE"
 
+# Remove the apply-time flags state so the next apply uses defaults.
+flags_state=$(uu_flags_state_path)
+if [ -f "$flags_state" ]; then
+  rm -f "$flags_state" || warn "could not remove $flags_state"
+  audit_log uu.revert.flags "removed=$flags_state"
+  info "removed apply-time flags state"
+fi
+
 audit_log uu.revert.done "ok=1"
 cat <<EOF
 

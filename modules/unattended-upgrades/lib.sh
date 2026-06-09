@@ -86,7 +86,7 @@ uu_parse_flags() {
 
 uu_validate_flags() {
   case "$UU_REBOOT_TIME" in
-    [0-2][0-9]:[0-5][0-9]) : ;;
+    [01][0-9]:[0-5][0-9]|2[0-3]:[0-5][0-9]) : ;;
     *) die "unattended-upgrades: --reboot-time must be HH:MM (24h): $UU_REBOOT_TIME" ;;
   esac
 }
@@ -106,8 +106,12 @@ uu_resolve_distro() {
     local id codename
     id=$(uu_os_release_field ID)
     codename=$(uu_os_release_field VERSION_CODENAME)
-    [ -z "$UU_DISTRO" ] && [ -n "$id" ] && UU_DISTRO=$id
-    [ -z "$UU_CODENAME" ] && [ -n "$codename" ] && UU_CODENAME=$codename
+    if [ -z "$UU_DISTRO" ] && [ -n "$id" ]; then
+      UU_DISTRO=$id
+    fi
+    if [ -z "$UU_CODENAME" ] && [ -n "$codename" ]; then
+      UU_CODENAME=$codename
+    fi
   fi
   # Normalise to the apt origin label capitalisation.
   case "$UU_DISTRO" in
