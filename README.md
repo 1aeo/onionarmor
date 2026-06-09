@@ -150,7 +150,7 @@ sudo onionarmor revert --module dns-posture      # undo it
 sudo onionarmor apply  --module dns-posture --dry-run   # preview, change nothing
 ```
 
-A module lives under `modules/<name>/` and provides `apply.sh`, `audit.sh`, `revert.sh`, a `README.md`, and `tests/bats/`. The registry is a **directory scan** — a directory is a module iff it has those three action scripts; `list-modules` reads each module's one-line description from the `# MODULE:` header in `apply.sh`. (No manifest file to drift from the real scripts.) See [`lib/module.sh`](lib/module.sh) for the convention.
+A module lives under `modules/<name>/` and provides `apply.sh`, `audit.sh`, `revert.sh`, a `README.md`, and `tests/bats/`. The registry is a **directory scan** — a directory is a module iff it has those three action scripts; `list-modules` reads each module's one-line description from the `# MODULE:` header in `apply.sh`. (No manifest file to drift from the real scripts.) See [`modules/README.md`](modules/README.md) for the authoring guide (the skeleton + the shared `lib/common.sh` helpers) and [`lib/module.sh`](lib/module.sh) for the registry implementation.
 
 | Module | What it does | Docs |
 |---|---|---|
@@ -209,6 +209,7 @@ lib/common.sh                  # paths, logging, audit log, confirmation prompt
 lib/role.sh                    # role config parsing + host role.conf validation
 lib/sysctl_ops.sh              # current/target read, managed-file write, backups
 lib/module.sh                  # module registry + apply/audit/revert dispatch
+modules/README.md              # module authoring guide (skeleton + shared helpers)
 roles/tor-relay.conf           # 25-key tor-relay posture
 roles/eval-host.conf           # 25-key eval-host posture (kexec exception)
 roles/receiver.conf            # 25-key receiver posture
