@@ -26,11 +26,14 @@ managed_sysctl_backup_glob() {
 }
 
 # write_managed_sysctl <role> <pairs-file>: write the canonical .conf file
-# from a `key value` pairs file (one pair per line).
+# from a `key value` pairs file (one pair per line). Returns non-zero (warning
+# the specific reason) on any failure rather than dying internally, so the
+# caller can log its own audit `*.fail` line before failing closed. Dying here
+# would make that caller-side audit_fail_die unreachable.
 write_managed_sysctl() {
   local role=$1 pairs=$2 path tmp
   path=$(managed_sysctl_path "$role")
-  mkdir -p "$ONIONARMOR_SYSCTL_DIR" || die "cannot create $ONIONARMOR_SYSCTL_DIR"
+  mkdir -p "$ONIONARMOR_SYSCTL_DIR" || { warn "cannot create $ONIONARMOR_SYSCTL_DIR"; return 1; }
   tmp="$path.tmp.$$"
   {
     printf '# Managed by onionarmor — do not edit by hand.\n'
@@ -38,8 +41,8 @@ write_managed_sysctl() {
     printf '# Written: %s by %s\n' "$(oa_utc_iso)" "$ONIONARMOR_OPERATOR"
     printf '# To roll back: onionarmor rollback --role %s\n\n' "$role"
     awk '{print $1 " = " $2}' "$pairs"
-  } > "$tmp" || { rm -f "$tmp"; die "cannot write $tmp"; }
-  mv "$tmp" "$path" || die "cannot move $tmp -> $path"
+  } > "$tmp" || { rm -f "$tmp"; warn "cannot write $tmp"; return 1; }
+  mv "$tmp" "$path" || { warn "cannot move $tmp -> $path"; return 1; }
 }
 
 # reload_sysctl: ask the kernel to re-read /etc/sysctl.d. Returns the exit
