@@ -61,6 +61,11 @@ for u in "${UNITS[@]}"; do
     info "drop-in already current: $path"
     continue
   fi
+  if [ -f "$path" ] && ! sh_is_managed_dropin "$path"; then
+    warn "drop-in exists but is NOT onionarmor-managed — refusing to overwrite: $path"
+    audit_log sh.apply.skip "unit=$u reason=foreign-dropin path=$path"
+    continue
+  fi
   mkdir -p "$dir" || die "cannot create $dir"
   tmp="$path.tmp.$$"
   printf '%s\n' "$rendered" > "$tmp" || die "cannot write $tmp"

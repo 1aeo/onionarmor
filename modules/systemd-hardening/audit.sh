@@ -82,10 +82,18 @@ EOF
   # --- CapabilityBoundingSet (report effective; empty = all dropped) ---
   caps=$(sh_show_prop "$u" CapabilityBoundingSet)
   want_caps=$(sh_caps_for_unit "$u")
-  if [ -z "$want_caps" ]; then
-    sh_check green "  CapabilityBoundingSet" "effective='${caps:-<all dropped>}' (policy: drop all)"
+  if [ "$caps" = "$want_caps" ]; then
+    if [ -z "$want_caps" ]; then
+      sh_check green "  CapabilityBoundingSet" "effective='${caps:-<all dropped>}' (policy: drop all)"
+    else
+      sh_check green "  CapabilityBoundingSet" "effective='$caps' (policy: $want_caps)"
+    fi
   else
-    sh_check green "  CapabilityBoundingSet" "effective='$caps' (policy: $want_caps)"
+    if [ -z "$want_caps" ]; then
+      sh_check red "  CapabilityBoundingSet" "effective='$caps' (expected: drop all)"
+    else
+      sh_check red "  CapabilityBoundingSet" "effective='$caps' (expected: '$want_caps')"
+    fi
   fi
 done
 
