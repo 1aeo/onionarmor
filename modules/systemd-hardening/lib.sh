@@ -179,6 +179,7 @@ sh_detect_units() {
   for u in $OA_SH_STATIC_UNITS; do
     sh_unit_file_exists "$u" && printf '%s\n' "$u"
   done
+  return 0
 }
 
 # sh_unit_class <unit>: map a concrete unit to its policy class.

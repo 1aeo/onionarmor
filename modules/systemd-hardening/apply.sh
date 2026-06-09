@@ -53,6 +53,7 @@ mkdir -p "$ONIONARMOR_SH_STATE_DIR" || die "cannot create state dir $ONIONARMOR_
 #    units whose drop-in actually changed — only those get restarted.
 # ---------------------------------------------------------------------------
 changed=()
+skipped=()
 for u in "${UNITS[@]}"; do
   dir=$(sh_dropin_dir "$u")
   path=$(sh_dropin_path "$u")
@@ -64,6 +65,7 @@ for u in "${UNITS[@]}"; do
   if [ -f "$path" ] && ! sh_is_managed_dropin "$path"; then
     warn "drop-in exists but is NOT onionarmor-managed — refusing to overwrite: $path"
     audit_log sh.apply.skip "unit=$u reason=foreign-dropin path=$path"
+    skipped+=("$u")
     continue
   fi
   mkdir -p "$dir" || die "cannot create $dir"
@@ -87,9 +89,14 @@ if [ "$SH_NO_RESTART" -eq 1 ]; then
 fi
 
 if [ "${#changed[@]}" -eq 0 ]; then
-  audit_log sh.apply.done "changed=none"
-  info "all drop-ins already current — nothing to restart"
-  printf '\n[systemd-hardening] already applied (no changes).\n'
+  audit_log sh.apply.done "changed=none skipped=${skipped[*]:-none}"
+  if [ "${#skipped[@]}" -gt 0 ]; then
+    info "no changes: ${#skipped[@]} unit(s) skipped due to foreign drop-ins"
+    printf '\n[systemd-hardening] no changes (units skipped due to foreign drop-ins).\n'
+  else
+    info "all drop-ins already current — nothing to restart"
+    printf '\n[systemd-hardening] already applied (no changes).\n'
+  fi
   exit 0
 fi
 
@@ -112,7 +119,12 @@ for u in "${changed[@]}"; do
   # --- AUTO-REVERT this unit: its drop-in is suspected of breaking startup. ---
   warn "$u did not become active within ${ONIONARMOR_SH_RESTART_TIMEOUT}s — auto-reverting its drop-in"
   audit_log sh.apply.autorevert "unit=$u stage=detect"
-  rm -f "$path" || warn "could not remove $path during auto-revert"
+  if ! rm -f "$path"; then
+    warn "FATAL: could not remove $path during auto-revert — $u may remain down"
+    audit_log sh.apply.autorevert "unit=$u stage=removal-failed"
+    reverted+=("$u")
+    continue
+  fi
   dir=$(sh_dropin_dir "$u")
   rmdir "$dir" 2>/dev/null || true
   "$ONIONARMOR_SH_SYSTEMCTL" daemon-reload >/dev/null 2>&1 || true
@@ -131,7 +143,9 @@ audit_log sh.apply.done "changed=${changed[*]} reverted=${reverted[*]:-none}"
 printf '\n[systemd-hardening] applied.\n'
 printf '  hardened : '
 for u in "${UNITS[@]}"; do
-  case " ${reverted[*]:-} " in *" $u "*) : ;; *) printf '%s ' "$u" ;; esac
+  case " ${reverted[*]:-} " in *" $u "*) continue ;; esac
+  case " ${skipped[*]:-} " in *" $u "*) continue ;; esac
+  printf '%s ' "$u"
 done
 printf '\n'
 if [ "${#reverted[@]}" -gt 0 ]; then
