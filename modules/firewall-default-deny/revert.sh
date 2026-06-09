@@ -85,7 +85,13 @@ cat <<EOF
 [firewall-default-deny] reverted.
   ufw      : disabled + reset (left installed)
   latch    : ${job:-none} cancelled
-  manifest : removed ($manifest_path)
+EOF
+if [ "$reset_ok" -eq 1 ]; then
+  printf '  manifest : removed (%s)\n' "$manifest_path"
+else
+  printf '  manifest : kept for retry (%s)\n' "$manifest_path"
+fi
+cat <<EOF
 
 WARNING: inbound is no longer default-deny. Re-apply to restore the posture:
   onionarmor apply --module firewall-default-deny

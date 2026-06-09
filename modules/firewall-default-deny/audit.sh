@@ -94,7 +94,12 @@ rendered=$(fw_render_manifest)
 if [ ! -f "$manifest_path" ]; then
   fw_check yellow "manifest in sync" "no manifest yet at $manifest_path (apply not run?)"
 elif [ "$(cat "$manifest_path")" = "$rendered" ]; then
-  fw_check green "manifest in sync" "stored rule set matches current host"
+  # Manifest exists and matches, but if UFW is inactive, this is a posture regression
+  if printf '%s\n' "$verbose" | head -1 | grep -qi 'Status: active'; then
+    fw_check green "manifest in sync" "stored rule set matches current host"
+  else
+    fw_check red "manifest in sync" "manifest exists but UFW is inactive — posture regression"
+  fi
 else
   fw_check yellow "manifest in sync" "host listeners changed since apply — re-apply to reconcile"
 fi

@@ -156,7 +156,8 @@ if [ "$FW_SAFETY_LATCH" -eq 1 ]; then
   latch_out=$(printf '%s\n' "$latch_cmd" | "$ONIONARMOR_FW_AT" now + "$FW_LATCH_MIN" minutes 2>&1 || true)
   latch_job=$(printf '%s\n' "$latch_out" | grep -oE 'job[[:space:]]+[0-9]+' | awk '{print $2}' | head -1)
   if [ -z "$latch_job" ]; then
-    warn "could not parse the at job id (latch may not be scheduled): $latch_out"
+    audit_log fw.apply.fail "stage=latch-parse output=$latch_out"
+    die "could not parse the at job id — refusing to enable without latch tracking (use --no-safety-latch to skip)"
   fi
 else
   warn "--no-safety-latch: no auto-disable scheduled — make sure you have console access"
@@ -195,7 +196,8 @@ else
     info "wrote rule manifest: $manifest_path"
   else
     rm -f "$tmp" 2>/dev/null
-    warn "could not write manifest to $manifest_path"
+    audit_log fw.apply.fail "stage=manifest-write path=$manifest_path"
+    die "could not write manifest to $manifest_path — idempotent apply requires this file"
   fi
 fi
 
