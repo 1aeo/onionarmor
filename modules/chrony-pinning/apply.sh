@@ -69,7 +69,7 @@ if [ -f "$ONIONARMOR_CHR_MAIN_CONF" ]; then
     backup=$(chr_mainconf_backup)
     [ -e "$backup" ] || cp -p "$ONIONARMOR_CHR_MAIN_CONF" "$backup" \
       || die "cannot back up $ONIONARMOR_CHR_MAIN_CONF -> $backup"
-    if ! grep -q 'onionarmor chrony-pinning include block' "$ONIONARMOR_CHR_MAIN_CONF" 2>/dev/null; then
+    if ! grep -Fxq '# --- onionarmor chrony-pinning include block (managed) ---' "$ONIONARMOR_CHR_MAIN_CONF" 2>/dev/null; then
       {
         printf '\n# --- onionarmor chrony-pinning include block (managed) ---\n'
         chr_main_reads sourcedir "$ONIONARMOR_CHR_SOURCES_DIR" || printf 'sourcedir %s\n' "$ONIONARMOR_CHR_SOURCES_DIR"
