@@ -63,8 +63,8 @@ mkdir -p "$ONIONARMOR_CHR_SOURCES_DIR" "$ONIONARMOR_CHR_CONF_DIR" "$ONIONARMOR_C
 # ---------------------------------------------------------------------------
 if [ -f "$ONIONARMOR_CHR_MAIN_CONF" ]; then
   need_block=0
-  chr_main_reads sourcedir || need_block=1
-  chr_main_reads confdir   || need_block=1
+  chr_main_reads sourcedir "$ONIONARMOR_CHR_SOURCES_DIR" || need_block=1
+  chr_main_reads confdir "$ONIONARMOR_CHR_CONF_DIR" || need_block=1
   if [ "$need_block" -eq 1 ]; then
     backup=$(chr_mainconf_backup)
     [ -e "$backup" ] || cp -p "$ONIONARMOR_CHR_MAIN_CONF" "$backup" \
@@ -72,8 +72,8 @@ if [ -f "$ONIONARMOR_CHR_MAIN_CONF" ]; then
     if ! grep -q 'onionarmor chrony-pinning include block' "$ONIONARMOR_CHR_MAIN_CONF" 2>/dev/null; then
       {
         printf '\n# --- onionarmor chrony-pinning include block (managed) ---\n'
-        chr_main_reads sourcedir || printf 'sourcedir %s\n' "$ONIONARMOR_CHR_SOURCES_DIR"
-        chr_main_reads confdir   || printf 'confdir %s\n' "$ONIONARMOR_CHR_CONF_DIR"
+        chr_main_reads sourcedir "$ONIONARMOR_CHR_SOURCES_DIR" || printf 'sourcedir %s\n' "$ONIONARMOR_CHR_SOURCES_DIR"
+        chr_main_reads confdir "$ONIONARMOR_CHR_CONF_DIR" || printf 'confdir %s\n' "$ONIONARMOR_CHR_CONF_DIR"
       } >> "$ONIONARMOR_CHR_MAIN_CONF" || die "cannot append include block to $ONIONARMOR_CHR_MAIN_CONF"
       audit_log chr.apply.include "appended sourcedir/confdir to=$ONIONARMOR_CHR_MAIN_CONF backup=$backup"
       info "added sourcedir/confdir include block to $ONIONARMOR_CHR_MAIN_CONF (backup: $backup)"

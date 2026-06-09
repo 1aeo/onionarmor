@@ -156,9 +156,9 @@ chr_chrony_installed() {
 # chr_main_reads <keyword> <dir>: true if the main chrony.conf already pulls in
 # <dir> via a sourcedir/confdir/include line for <keyword>.
 chr_main_reads() {
-  local keyword=$1
+  local keyword=$1 dir=$2
   [ -f "$ONIONARMOR_CHR_MAIN_CONF" ] || return 1
-  grep -qE "^[[:space:]]*${keyword}[[:space:]]" "$ONIONARMOR_CHR_MAIN_CONF" 2>/dev/null
+  grep -E "^[[:space:]]*${keyword}[[:space:]]+" "$ONIONARMOR_CHR_MAIN_CONF" 2>/dev/null | grep -qF "$dir"
 }
 
 # chr_count_reachable_stratum1 <chronyc-sources-output>: count sources that are
