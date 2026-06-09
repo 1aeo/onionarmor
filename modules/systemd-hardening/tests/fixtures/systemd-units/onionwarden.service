@@ -1,0 +1,11 @@
+# Fixture only — minimal onionwarden unit for the systemd-hardening bats suite.
+[Unit]
+Description=onionwarden (fixture)
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/onionwarden
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,13 @@
+# Fixture only — minimal tor@ template for the systemd-hardening bats suite.
+# Not a real unit; no host-specific config. Instances: tor@<name>.service.
+[Unit]
+Description=Anonymizing overlay network for TCP (instance %i)
+
+[Service]
+Type=notify
+User=_tor-%i
+ExecStart=/usr/bin/tor --defaults-torrc /usr/share/tor/tor-service-defaults-torrc --RunAsDaemon 0
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
