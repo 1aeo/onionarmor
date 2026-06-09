@@ -108,8 +108,7 @@ oa_parse_args() {
 cmd_list() {
   oa_parse_args "$@"
   require_role list
-  local f; f=$(role_file_for "$_oa_role")
-  info "role=$_oa_role file=$f"
+  info "role=$_oa_role file=$(role_file_for "$_oa_role")"
   printf '\n%-40s %s\n' "SYSCTL" "TARGET"
   printf '%-40s %s\n' "----------------------------------------" "------"
   # Parse once: render the table and report the count via awk's END so the role

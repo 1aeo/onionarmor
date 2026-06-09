@@ -65,8 +65,8 @@ elif [ "$KRP_AUTO" -eq 1 ]; then
       oa_status_check green "tor ports covered" "all $detected detected loopback tor port(s) inside the reservation"
     else
       gap=$(printf '%s\n' "$uncovered" | krp_compact_ports "$KRP_CLUSTER_GAP" | krp_pairs_to_csv)
-      nun=$(printf '%s\n' "$uncovered" | grep -c .)
-      oa_status_check red "tor ports covered" "drift: $nun tor port(s) NOT reserved ($gap) — reservation is '$dropin_val'"
+      n_uncovered=$(printf '%s\n' "$uncovered" | grep -c .)
+      oa_status_check red "tor ports covered" "drift: $n_uncovered tor port(s) NOT reserved ($gap) — reservation is '$dropin_val'"
     fi
   fi
 else
