@@ -81,6 +81,12 @@ if fw_ufw_is_active; then
   elif [ "$(cat "$manifest_path")" != "$rendered" ]; then
     needs_reset=1
     reset_reason="manifest-changed"
+  else
+    persisted_ipv6=$(fw_read_ipv6_choice)
+    if [ "$persisted_ipv6" != "$FW_IPV6" ]; then
+      needs_reset=1
+      reset_reason="ipv6-changed"
+    fi
   fi
   
   if [ "$needs_reset" -eq 1 ]; then
