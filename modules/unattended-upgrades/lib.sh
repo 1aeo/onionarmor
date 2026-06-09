@@ -89,6 +89,11 @@ uu_validate_flags() {
     [01][0-9]:[0-5][0-9]|2[0-3]:[0-5][0-9]) : ;;
     *) die "unattended-upgrades: --reboot-time must be HH:MM (24h): $UU_REBOOT_TIME" ;;
   esac
+  # Fail early on unsupported distro before any apt/filesystem operations.
+  case "$UU_DISTRO" in
+    Debian|Ubuntu) : ;;
+    *) die "unattended-upgrades: unsupported/undetected distro '${UU_DISTRO:-?}' — pass --distro Debian|Ubuntu" ;;
+  esac
 }
 
 # uu_resolve_distro: fill UU_DISTRO / UU_CODENAME from lsb_release (preferred)

@@ -63,11 +63,14 @@ fi
 audit_log uu.revert.service "masked=$ONIONARMOR_UU_SERVICE mask_ok=$mask_ok"
 
 # Remove the apply-time flags state so the next apply uses defaults.
-flags_state=$(uu_flags_state_path)
-if [ -f "$flags_state" ]; then
-  rm -f "$flags_state" || warn "could not remove $flags_state"
-  audit_log uu.revert.flags "removed=$flags_state"
-  info "removed apply-time flags state"
+# Only remove the marker after masking succeeds; keep it on failure for retry.
+if [ "$mask_ok" -eq 1 ]; then
+  flags_state=$(uu_flags_state_path)
+  if [ -f "$flags_state" ]; then
+    rm -f "$flags_state" || warn "could not remove $flags_state"
+    audit_log uu.revert.flags "removed=$flags_state"
+    info "removed apply-time flags state"
+  fi
 fi
 
 audit_log uu.revert.done "ok=$mask_ok"
