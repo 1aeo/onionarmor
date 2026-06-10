@@ -150,18 +150,34 @@ fw_frontend() {
 }
 
 # fw_ssh_ports: echo the SSH port(s), one per line. Honours --ssh-port, else
-# parses 'Port' lines from sshd_config, else defaults to 22.
+# parses 'Port' lines from sshd_config (including Include'd files), else defaults to 22.
 fw_ssh_ports() {
   if [ -n "$FW_SSH_PORT_OVERRIDE" ]; then
     printf '%s\n' "$FW_SSH_PORT_OVERRIDE"
     return 0
   fi
-  local found=""
+  local found="" config_dir inc_pattern inc_file
   if [ -r "$ONIONARMOR_FW_SSHD_CONFIG" ]; then
+    config_dir=$(dirname "$ONIONARMOR_FW_SSHD_CONFIG")
+    # Parse Port directives from main config
     found=$(awk 'tolower($1) == "port" && $2 ~ /^[0-9]+$/ { print $2 }' "$ONIONARMOR_FW_SSHD_CONFIG")
+    # Parse Include directives and read Port directives from included files
+    while IFS= read -r inc_pattern; do
+      [ -n "$inc_pattern" ] || continue
+      # Make relative paths absolute
+      case "$inc_pattern" in /*) : ;; *) inc_pattern="$config_dir/$inc_pattern" ;; esac
+      # Expand glob (disable pathname expansion to avoid breaking on special chars)
+      for inc_file in $inc_pattern; do
+        [ -r "$inc_file" ] || continue
+        found="$found
+$(awk 'tolower($1) == "port" && $2 ~ /^[0-9]+$/ { print $2 }' "$inc_file")"
+      done
+    done <<EOF
+$(awk 'tolower($1) == "include" && NF >= 2 { $1=""; sub(/^[[:space:]]+/, ""); print }' "$ONIONARMOR_FW_SSHD_CONFIG")
+EOF
   fi
   if [ -n "$found" ]; then
-    printf '%s\n' "$found"
+    printf '%s\n' "$found" | sed '/^$/d' | sort -u
   else
     printf '22\n'
   fi

@@ -50,6 +50,20 @@ load test_helper
   ! grep -q '^allow 22/tcp$' "$m"
 }
 
+@test "apply: detects an SSH port set in an Include'd sshd_config.d file" {
+  # Debian 12 / Ubuntu 22.04 default: main config Include's a drop-in dir where
+  # the real Port often lives. The firewall must follow the Include or it would
+  # miss the SSH port and risk locking the operator out.
+  printf 'Include sshd_config.d/*.conf\nPermitRootLogin no\n' > "$ONIONARMOR_FW_SSHD_CONFIG"
+  mkdir -p "$(dirname "$ONIONARMOR_FW_SSHD_CONFIG")/sshd_config.d"
+  printf 'Port 33311\n' > "$(dirname "$ONIONARMOR_FW_SSHD_CONFIG")/sshd_config.d/99-port.conf"
+  run bash "$APPLY"
+  [ "$status" -eq 0 ]
+  m="$ONIONARMOR_FW_STATE_DIR/rules.manifest"
+  grep -q '^allow 33311/tcp$' "$m"
+  ! grep -q '^allow 22/tcp$' "$m"
+}
+
 @test "apply: known-safe public listeners (80/443) get allow rules" {
   add_listener 0.0.0.0 443
   add_listener 0.0.0.0 80
