@@ -139,7 +139,7 @@ chr_render_sources() {
   printf '# Managed by onionarmor (module: chrony-pinning) — do not edit by hand.\n'
   printf '# Revert with: onionarmor revert --module chrony-pinning\n'
   printf '#\n'
-  printf '# 4 diverse stratum-1 sources (geographic + operator diversity).\n'
+  printf '# Diverse stratum-1 sources (geographic + operator diversity; operator-configurable).\n'
   local host label
   while IFS='|' read -r host label; do
     [ -n "$host" ] || continue
