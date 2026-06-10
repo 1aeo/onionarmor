@@ -142,6 +142,15 @@ load test_helper
   [[ "$output" == *"179"* ]]
 }
 
+@test "apply: malformed persisted --allow state is rejected, not applied" {
+  # a corrupt/hand-edited extra-allow.state must fail loudly after the merge
+  mkdir -p "$ONIONARMOR_FW_STATE_DIR"
+  printf '53/udp\n' > "$ONIONARMOR_FW_STATE_DIR/extra-allow.state"
+  run bash "$APPLY"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"only supports tcp"* ]]
+}
+
 @test "apply: unrecognised listener is DENIED + warned; --allow exposes it" {
   add_listener 0.0.0.0 8080
   run bash "$APPLY"

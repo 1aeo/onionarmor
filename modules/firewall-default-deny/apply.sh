@@ -22,6 +22,13 @@ latch_state=$(fw_latch_state_path)
 persisted_allow=$(fw_read_extra_allow)
 if [ -n "$persisted_allow" ]; then
   FW_EXTRA_ALLOW="$FW_EXTRA_ALLOW $persisted_allow"
+  # Re-validate after merging persisted allows to catch malformed state
+  for p in $FW_EXTRA_ALLOW; do
+    case "${p%%/*}" in (*[!0-9]*|"") die "firewall-default-deny: invalid port in persisted or CLI --allow: $p" ;; esac
+    case "$p" in
+      */*) case "${p#*/}" in tcp) : ;; *) die "firewall-default-deny: --allow only supports tcp: $p" ;; esac ;;
+    esac
+  done
 fi
 
 fw_build_manifest                  # sets FW_RULES + FW_UNKNOWN (globals)
@@ -81,11 +88,12 @@ if fw_ufw_is_active && [ -f "$manifest_path" ] && [ "$(cat "$manifest_path")" = 
         info "cancelled safety-latch at job $persisted_latch_job"
         rm -f "$latch_state" 2>/dev/null || warn "could not remove $latch_state"
         audit_log fw.apply.latch-cancel "job=$persisted_latch_job"
+        printf '\n[firewall-default-deny] safety latch cancelled (no other changes).\n'
+        exit 0
       else
         warn "could not cancel safety-latch at job $persisted_latch_job (atrm $persisted_latch_job)"
+        die "failed to cancel safety latch — job $persisted_latch_job may still be queued"
       fi
-      printf '\n[firewall-default-deny] safety latch cancelled (no other changes).\n'
-      exit 0
     else
       info "ufw already active and rule manifest unchanged — nothing to do"
       printf '\n[firewall-default-deny] already applied (no changes).\n'
@@ -282,6 +290,7 @@ if [ -n "$latch_job" ]; then
     "$ONIONARMOR_FW_ATRM" "$latch_job" >/dev/null 2>&1 \
       && warn "could not write latch state to $latch_state — cancelled job $latch_job to prevent orphan" \
       || warn "could not write latch state to $latch_state AND failed to cancel job $latch_job — manually run: atrm $latch_job"
+    latch_job=""
   fi
 fi
 
@@ -294,7 +303,12 @@ else
     info "wrote rule manifest: $manifest_path"
   else
     rm -f "$tmp" 2>/dev/null
-    audit_log fw.apply.fail "stage=manifest-write path=$manifest_path"
+    if [ -n "$latch_job" ]; then
+      "$ONIONARMOR_FW_ATRM" "$latch_job" >/dev/null 2>&1 \
+        && warn "cancelled safety-latch at job $latch_job (manifest write failed)" \
+        || warn "could not cancel safety-latch at job $latch_job — manually run: atrm $latch_job"
+    fi
+    audit_log fw.apply.fail "stage=manifest-write path=$manifest_path latch_cancelled=${latch_job:-none}"
     die "could not write manifest to $manifest_path — idempotent apply requires this file"
   fi
 fi
