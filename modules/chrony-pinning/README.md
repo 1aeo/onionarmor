@@ -80,7 +80,9 @@ Read-only; exits non-zero if any check is **red**:
 2. **sources pinned** — the managed `.sources` file is present and matches the
    posture. (Yellow if managed but customised.)
 3. **timesyncd masked** — `systemd-timesyncd` is masked; **red** if it is still
-   enabled (a second daemon fighting over the clock).
+   enabled (a second daemon fighting over the clock). If apply was run with
+   `--no-mask-timesyncd`, `audit` reports this check **yellow** (not enforced)
+   instead of red — that yellow is expected and requires no operator action.
 4. **stratum-1 reachable** — `chronyc -n sources` shows **≥2** reachable
    stratum-1 sources. **Yellow** at exactly 1 (no diversity), **red** at 0.
 5. **offset within threshold** — `chronyc tracking`'s last offset is within

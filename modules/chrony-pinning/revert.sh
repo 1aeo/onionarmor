@@ -9,6 +9,9 @@ _here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib.sh
 . "$_here/lib.sh"
 
+# revert applies no posture flags of its own, but it still runs the shared parser
+# so `-h/--help` works and unknown/invalid options are rejected consistently with
+# apply/audit. The parsed CHR_* values are intentionally unused here.
 chr_parse_flags "$@"
 
 sources=$(chr_sources_path)
