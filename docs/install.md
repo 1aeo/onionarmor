@@ -6,7 +6,7 @@ trust model. For the fast path, see [Install in the README](../README.md#install
 ## Requirements
 
 - Debian 12+ or Ubuntu 22.04+ (the installer refuses other distros).
-- Kernel ≥ 5.13 (the kernel that introduced `kernel.unprivileged_bpf_disabled=2`, commit `08389d888287`; Debian 12 and Ubuntu 22.04+ both ship newer kernels).
+- Kernel ≥ 5.13 for the full role posture: `kernel.unprivileged_bpf_disabled=2` landed in 5.13 (commit `08389d888287`). The installer itself only refuses kernels older than 5.2 (its `ONIONARMOR_INSTALL_MIN_KERNEL` floor) — 5.2–5.12 install fine but can't take that one key's hardened value. Debian 12 and Ubuntu 22.04+ ship 5.15 or newer, so this only bites unusually old kernels.
 - `bash` 4+, plus `awk` and `sysctl` (the installer `apt-get install`s anything missing).
 - `root` (the tool writes `/etc`, `/opt`, and `/usr/local/sbin`).
 
