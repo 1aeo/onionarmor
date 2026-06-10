@@ -67,7 +67,7 @@ fi
 # ---------------------------------------------------------------------------
 ipv6_choice_path=$(fw_ipv6_choice_path)
 extra_allow_path=$(fw_extra_allow_path)
-if [ "$reset_ok" -eq 1 ]; then
+if [ "$reset_ok" -eq 1 ] || ! command -v "$ONIONARMOR_FW_UFW" >/dev/null 2>&1; then
   if [ -f "$manifest_path" ]; then
     rm -f "$manifest_path" || warn "could not remove $manifest_path"
     audit_log fw.revert.manifest "removed=$manifest_path"
@@ -96,7 +96,7 @@ cat <<EOF
   ufw      : $([ "$revert_failed" -eq 0 ] && echo "disabled + reset (left installed)" || echo "disable/reset FAILED — posture may still be partially active")
   latch    : ${job:-none} cancelled
 EOF
-if [ "$reset_ok" -eq 1 ]; then
+if [ "$reset_ok" -eq 1 ] || ! command -v "$ONIONARMOR_FW_UFW" >/dev/null 2>&1; then
   printf '  manifest : removed (%s)\n' "$manifest_path"
 else
   printf '  manifest : kept for retry (%s)\n' "$manifest_path"
