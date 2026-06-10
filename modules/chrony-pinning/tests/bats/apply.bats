@@ -88,6 +88,7 @@ load test_helper
   [ "$status" -eq 0 ]
   grep -q 'onionarmor chrony-pinning include block' "$ONIONARMOR_CHR_MAIN_CONF"
   grep -q "^sourcedir $ONIONARMOR_CHR_SOURCES_DIR" "$ONIONARMOR_CHR_MAIN_CONF"
+  grep -q "^confdir $ONIONARMOR_CHR_CONF_DIR" "$ONIONARMOR_CHR_MAIN_CONF"
   [ -f "$ONIONARMOR_CHR_STATE_DIR/chrony.conf.orig" ]
 }
 
