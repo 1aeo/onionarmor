@@ -24,7 +24,7 @@ free to hand `48082` to a *different* tor instance as the source port of one of
 its outbound connections. When the first instance (re)starts and tries to bind
 `48082`, the port is already in use and the bind fails. The relay doesn't start.
 
-We hit exactly this on **`relay-host-5`**: `tor@instance-1`'s `MetricsPort 48082`
+We hit exactly this on **`relay-mid-1`**: `tor@instance-1`'s `MetricsPort 48082`
 intermittently failed to bind because another of the ~hundreds of co-resident
 tor instances had grabbed `48082` as an ephemeral source port for an outbound
 socket. It is racy and density-dependent — it shows up precisely on the busy,
@@ -143,7 +143,7 @@ to check a different scope.
 **What this defends:** relay **availability** on dense, many-instance hosts.
 A failed-to-bind tor instance is a relay that silently drops out of the network.
 Reserving its loopback ports removes a class of intermittent, density-dependent
-bind failures (the `relay-host-5` / `MetricsPort 48082` incident).
+bind failures (the `relay-mid-1` / `MetricsPort 48082` incident).
 
 **Why it's in a hardening tool even though it isn't a classic security control:**
 relay capacity and uptime are anonymity-relevant. The Tor network's anonymity
