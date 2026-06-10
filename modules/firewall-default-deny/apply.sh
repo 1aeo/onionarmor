@@ -59,8 +59,18 @@ mkdir -p "$ONIONARMOR_FW_STATE_DIR" || die "cannot create state dir $ONIONARMOR_
 # ---------------------------------------------------------------------------
 if fw_ufw_is_active && [ -f "$manifest_path" ] && [ "$(cat "$manifest_path")" = "$rendered" ]; then
   # Also verify IPv6 configuration matches the requested setting
-  persisted_ipv6=$(fw_read_ipv6_choice)
-  if [ "$persisted_ipv6" != "$FW_IPV6" ]; then
+  ipv6_choice_path=$(fw_ipv6_choice_path)
+  if [ -f "$ipv6_choice_path" ]; then
+    persisted_ipv6=$(fw_read_ipv6_choice)
+    ipv6_mismatch=$([ "$persisted_ipv6" != "$FW_IPV6" ] && echo 1 || echo 0)
+  else
+    # Choice file missing: compare live state to detect stale config
+    live_ipv6_enabled=$(fw_ipv6_enabled && echo 1 || echo 0)
+    desired_ipv6_enabled="$FW_IPV6"
+    ipv6_mismatch=$([ "$live_ipv6_enabled" != "$desired_ipv6_enabled" ] && echo 1 || echo 0)
+    persisted_ipv6="$live_ipv6_enabled"
+  fi
+  if [ "$ipv6_mismatch" -eq 1 ]; then
     info "manifest unchanged but IPv6 setting changed (was $persisted_ipv6, now $FW_IPV6) — proceeding to update"
   else
     # Also verify latch configuration matches the requested setting
@@ -97,8 +107,17 @@ if fw_ufw_is_active; then
     needs_reset=1
     reset_reason="manifest-changed"
   else
-    persisted_ipv6=$(fw_read_ipv6_choice)
-    if [ "$persisted_ipv6" != "$FW_IPV6" ]; then
+    ipv6_choice_path=$(fw_ipv6_choice_path)
+    if [ -f "$ipv6_choice_path" ]; then
+      persisted_ipv6=$(fw_read_ipv6_choice)
+      ipv6_mismatch=$([ "$persisted_ipv6" != "$FW_IPV6" ] && echo 1 || echo 0)
+    else
+      # Choice file missing: compare live state to detect stale config
+      live_ipv6_enabled=$(fw_ipv6_enabled && echo 1 || echo 0)
+      desired_ipv6_enabled="$FW_IPV6"
+      ipv6_mismatch=$([ "$live_ipv6_enabled" != "$desired_ipv6_enabled" ] && echo 1 || echo 0)
+    fi
+    if [ "$ipv6_mismatch" -eq 1 ]; then
       needs_reset=1
       reset_reason="ipv6-changed"
     fi
