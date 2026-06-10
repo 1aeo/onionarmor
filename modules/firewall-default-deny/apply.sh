@@ -60,12 +60,20 @@ mkdir -p "$ONIONARMOR_FW_STATE_DIR" || die "cannot create state dir $ONIONARMOR_
 if fw_ufw_is_active && [ -f "$manifest_path" ] && [ "$(cat "$manifest_path")" = "$rendered" ]; then
   # Also verify IPv6 configuration matches the requested setting
   persisted_ipv6=$(fw_read_ipv6_choice)
-  if [ "$persisted_ipv6" = "$FW_IPV6" ]; then
-    info "ufw already active and rule manifest unchanged — nothing to do"
-    printf '\n[firewall-default-deny] already applied (no changes).\n'
-    exit 0
-  else
+  if [ "$persisted_ipv6" != "$FW_IPV6" ]; then
     info "manifest unchanged but IPv6 setting changed (was $persisted_ipv6, now $FW_IPV6) — proceeding to update"
+  else
+    # Also verify latch configuration matches the requested setting
+    persisted_latch_job=$(fw_latch_pending)
+    if [ "$FW_SAFETY_LATCH" -eq 0 ] && [ -n "$persisted_latch_job" ]; then
+      info "manifest unchanged but safety latch must be cancelled (--no-safety-latch specified) — proceeding"
+    elif [ "$FW_SAFETY_LATCH" -eq 1 ] && [ -z "$persisted_latch_job" ]; then
+      info "manifest unchanged but safety latch must be scheduled — proceeding"
+    else
+      info "ufw already active and rule manifest unchanged — nothing to do"
+      printf '\n[firewall-default-deny] already applied (no changes).\n'
+      exit 0
+    fi
   fi
 fi
 
@@ -235,7 +243,9 @@ if [ -n "$latch_job" ]; then
     audit_log fw.apply.latch "job=$latch_job minutes=$FW_LATCH_MIN"
     info "scheduled safety latch (at job $latch_job): auto-disable in $FW_LATCH_MIN min"
   else
-    warn "could not write latch state to $latch_state (job $latch_job is queued but not tracked)"
+    "$ONIONARMOR_FW_ATRM" "$latch_job" >/dev/null 2>&1 \
+      && warn "could not write latch state to $latch_state — cancelled job $latch_job to prevent orphan" \
+      || warn "could not write latch state to $latch_state AND failed to cancel job $latch_job — manually run: atrm $latch_job"
   fi
 fi
 

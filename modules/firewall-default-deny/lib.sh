@@ -212,9 +212,15 @@ fw_bgp_peers() {
 # (-l <ip> or -A <ip>), or empty.
 fw_bgp_bind() {
   [ -r "$ONIONARMOR_FW_FRR_DAEMONS" ] || return 0
-  local opts
+  local opts bind
   opts=$(grep -E '^[[:space:]]*bgpd_options=' "$ONIONARMOR_FW_FRR_DAEMONS" 2>/dev/null | tail -1 || true)
-  printf '%s\n' "$opts" | grep -oE '(-l|-A)[[:space:]]+[0-9a-fA-F.:]+' | awk '{print $2}' | head -1 || true
+  # Prefer -l (BGP listen) over -A (VTY address). Bracket the leading dash
+  # ([-]l / [-]A) so grep doesn't parse the pattern as an option.
+  bind=$(printf '%s\n' "$opts" | grep -oE '[-]l[[:space:]]+[0-9a-fA-F.:]+' | awk '{print $2}' | head -1 || true)
+  if [ -z "$bind" ]; then
+    bind=$(printf '%s\n' "$opts" | grep -oE '[-]A[[:space:]]+[0-9a-fA-F.:]+' | awk '{print $2}' | head -1 || true)
+  fi
+  printf '%s\n' "$bind"
 }
 
 # fw_bgp_rules: for a tcp/179 listener, emit the restricted ufw rule spec(s) —
@@ -335,11 +341,18 @@ fw_latch_pending() {
 }
 
 # fw_read_ipv6_choice: echo "1" if IPv6 was enabled at apply time, "0" if
-# disabled, or empty if never applied (then caller uses default).
+# disabled, or the default "1" if never applied or file is empty.
 fw_read_ipv6_choice() {
-  local f
+  local f val
   f=$(fw_ipv6_choice_path)
-  [ -f "$f" ] && cat "$f" 2>/dev/null || true
+  if [ -f "$f" ]; then
+    val=$(cat "$f" 2>/dev/null || true)
+    if [ -n "$val" ]; then
+      printf '%s\n' "$val"
+      return 0
+    fi
+  fi
+  printf '1\n'
 }
 
 # fw_read_extra_allow: echo the space-separated list of --allow ports persisted

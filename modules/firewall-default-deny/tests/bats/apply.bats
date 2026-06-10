@@ -99,6 +99,17 @@ load test_helper
   ! grep -q '^allow 179/tcp$' "$m"
 }
 
+@test "apply: BGP bind prefers -l (listen) over -A (VTY) when they differ" {
+  add_listener 0.0.0.0 179
+  # -l is the BGP listen address; -A is the VTY/mgmt address — bind to -l.
+  printf 'bgpd=yes\nbgpd_options="-A 192.0.2.99 -l 192.0.2.1"\n' > "$ONIONARMOR_FW_FRR_DAEMONS"
+  run bash "$APPLY"
+  [ "$status" -eq 0 ]
+  m="$ONIONARMOR_FW_STATE_DIR/rules.manifest"
+  grep -q '^allow to 192.0.2.1 port 179 proto tcp$' "$m"
+  ! grep -q '192.0.2.99' "$m"
+}
+
 @test "apply: BGP/179 -> per-peer source rules when neighbors are configured" {
   add_listener 0.0.0.0 179
   seed_frr_neighbors 192.0.2.7 192.0.2.8
