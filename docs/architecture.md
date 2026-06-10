@@ -11,7 +11,7 @@ way it is, and contributors working on the code. For day-to-day use, the
 | Tool | Role | Touches host? |
 |---|---|---|
 | [`onionwarden`](https://github.com/1aeo/onionwarden) | Monitor / detect drift in kernel + network posture | **No** (read-only) |
-| [`onionleak`](https://github.com/1aeo/onionleak) | Audit Tor-relay metadata for unintended disclosures | **No** (read-only) |
+| `onionleak` | Audit Tor-relay metadata for unintended disclosures | **No** (read-only) |
 | **`onionarmor`** (this repo) | **Apply** the hardening onionwarden surfaces | **Yes** — sysctls + GRUB cmdline, with safety rails |
 
 onionwarden tells you what's drifting from CIS / RHEL-STIG / kernel-doc
