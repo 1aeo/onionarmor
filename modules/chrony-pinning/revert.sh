@@ -82,6 +82,9 @@ if [ "$had_files" -eq 1 ] || [ "$had_backup" -eq 1 ] || [ "$had_state" -eq 1 ]; 
   "$ONIONARMOR_CHR_SYSTEMCTL" disable "$ONIONARMOR_CHR_SERVICE" >/dev/null 2>&1 || true
   chrony_state=$("$ONIONARMOR_CHR_SYSTEMCTL" is-active "$ONIONARMOR_CHR_SERVICE" 2>/dev/null || true)
   if [ "$chrony_state" = "active" ]; then
+    # Roll back timesyncd to avoid dual-daemon state; re-mask + stop it.
+    "$ONIONARMOR_CHR_SYSTEMCTL" stop "$ONIONARMOR_CHR_TIMESYNCD" >/dev/null 2>&1 || true
+    "$ONIONARMOR_CHR_SYSTEMCTL" mask "$ONIONARMOR_CHR_TIMESYNCD" >/dev/null 2>&1 || true
     audit_fail_die chr.revert.fail "stage=chrony" \
       "$ONIONARMOR_CHR_SERVICE still active after stop; keeping state for retry"
   fi
