@@ -71,11 +71,14 @@ chr_parse_flags() {
     case "$1" in
       --mask-timesyncd)     CHR_MASK_TIMESYNCD=1; shift ;;
       --no-mask-timesyncd)  CHR_MASK_TIMESYNCD=0; shift ;;
-      --makestep)           CHR_MAKESTEP=${2:-}; shift 2 ;;
+      --makestep)           [ $# -ge 2 ] || die "chrony-pinning: --makestep requires a value"
+                            CHR_MAKESTEP=$2; shift 2 ;;
       --makestep=*)         CHR_MAKESTEP=${1#--makestep=}; shift ;;
-      --leapsectz)          CHR_LEAPSECTZ=${2:-}; shift 2 ;;
+      --leapsectz)          [ $# -ge 2 ] || die "chrony-pinning: --leapsectz requires a value"
+                            CHR_LEAPSECTZ=$2; shift 2 ;;
       --leapsectz=*)        CHR_LEAPSECTZ=${1#--leapsectz=}; shift ;;
-      --offset-ms)          CHR_OFFSET_MS=${2:-}; shift 2 ;;
+      --offset-ms)          [ $# -ge 2 ] || die "chrony-pinning: --offset-ms requires a value"
+                            CHR_OFFSET_MS=$2; shift 2 ;;
       --offset-ms=*)        CHR_OFFSET_MS=${1#--offset-ms=}; shift ;;
       --dry-run)            CHR_DRY_RUN=1; shift ;;
       --verify)             CHR_VERIFY=1; shift ;;
