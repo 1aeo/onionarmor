@@ -177,7 +177,13 @@ chr_chrony_installed() {
 chr_main_reads() {
   local keyword=$1 dir=$2
   [ -f "$ONIONARMOR_CHR_MAIN_CONF" ] || return 1
-  grep -E "^[[:space:]]*${keyword}[[:space:]]+" "$ONIONARMOR_CHR_MAIN_CONF" 2>/dev/null | grep -qF "$dir"
+  # Match on exact tokens (keyword + directory), not a substring, so e.g.
+  # "sourcedir /etc/chrony/sources.d.bak" does NOT satisfy a check for
+  # "/etc/chrony/sources.d".
+  awk -v k="$keyword" -v d="$dir" '
+    $1 == k && $2 == d { found = 1; exit }
+    END { exit(found ? 0 : 1) }
+  ' "$ONIONARMOR_CHR_MAIN_CONF"
 }
 
 # chr_count_reachable_stratum1 <chronyc-sources-output>: count sources that are
