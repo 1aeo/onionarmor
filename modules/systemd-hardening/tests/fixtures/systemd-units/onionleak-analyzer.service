@@ -1,0 +1,11 @@
+# Fixture only — minimal onionleak-analyzer unit for the bats suite.
+[Unit]
+Description=onionleak analyzer (fixture)
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/onionleak-analyzer
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

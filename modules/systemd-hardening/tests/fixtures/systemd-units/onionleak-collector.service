@@ -1,0 +1,11 @@
+# Fixture only — minimal onionleak-collector unit for the bats suite.
+[Unit]
+Description=onionleak collector (fixture)
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/onionleak-collector
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
