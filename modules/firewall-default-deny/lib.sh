@@ -239,7 +239,14 @@ EOF
   fi
   bind=$(fw_bgp_bind)
   if [ -n "$bind" ]; then
-    printf 'allow to %s port 179 proto tcp\n' "$bind"
+    case "$bind" in
+      0.0.0.0|::)
+        return 0
+        ;;
+      *)
+        printf 'allow to %s port 179 proto tcp\n' "$bind"
+        ;;
+    esac
   fi
 }
 

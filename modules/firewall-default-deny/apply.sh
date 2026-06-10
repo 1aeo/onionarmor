@@ -66,9 +66,16 @@ if fw_ufw_is_active && [ -f "$manifest_path" ] && [ "$(cat "$manifest_path")" = 
     # Also verify latch configuration matches the requested setting
     persisted_latch_job=$(fw_latch_pending)
     if [ "$FW_SAFETY_LATCH" -eq 0 ] && [ -n "$persisted_latch_job" ]; then
-      info "manifest unchanged but safety latch must be cancelled (--no-safety-latch specified) — proceeding"
-    elif [ "$FW_SAFETY_LATCH" -eq 1 ] && [ -z "$persisted_latch_job" ]; then
-      info "manifest unchanged but safety latch must be scheduled — proceeding"
+      info "manifest unchanged but safety latch must be cancelled (--no-safety-latch specified)"
+      if "$ONIONARMOR_FW_ATRM" "$persisted_latch_job" >/dev/null 2>&1; then
+        info "cancelled safety-latch at job $persisted_latch_job"
+        rm -f "$latch_state" 2>/dev/null || warn "could not remove $latch_state"
+        audit_log fw.apply.latch-cancel "job=$persisted_latch_job"
+      else
+        warn "could not cancel safety-latch at job $persisted_latch_job (atrm $persisted_latch_job)"
+      fi
+      printf '\n[firewall-default-deny] safety latch cancelled (no other changes).\n'
+      exit 0
     else
       info "ufw already active and rule manifest unchanged — nothing to do"
       printf '\n[firewall-default-deny] already applied (no changes).\n'
@@ -206,6 +213,16 @@ if [ "$FW_SAFETY_LATCH" -eq 1 ]; then
     die "could not parse the at job id — refusing to enable without latch tracking (use --no-safety-latch to skip)"
   fi
 else
+  # Cancel any pending latch from previous apply with safety-latch enabled
+  old_job=$(fw_latch_pending)
+  if [ -n "$old_job" ]; then
+    if "$ONIONARMOR_FW_ATRM" "$old_job" >/dev/null 2>&1; then
+      info "cancelled previous safety-latch at job $old_job (--no-safety-latch specified)"
+      rm -f "$latch_state" 2>/dev/null || warn "could not remove $latch_state"
+    else
+      warn "could not cancel previous safety-latch at job $old_job (atrm $old_job)"
+    fi
+  fi
   warn "--no-safety-latch: no auto-disable scheduled — make sure you have console access"
 fi
 

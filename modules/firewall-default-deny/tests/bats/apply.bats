@@ -130,6 +130,18 @@ load test_helper
   [[ "$output" == *"179"* ]]
 }
 
+@test "apply: a wildcard BGP bind (0.0.0.0) is DENIED, never a blanket allow" {
+  add_listener 0.0.0.0 179
+  # bgpd bound to the wildcard must not produce 'allow to 0.0.0.0 port 179'
+  printf 'bgpd=yes\nbgpd_options="-l 0.0.0.0"\n' > "$ONIONARMOR_FW_FRR_DAEMONS"
+  run bash "$APPLY"
+  [ "$status" -eq 0 ]
+  m="$ONIONARMOR_FW_STATE_DIR/rules.manifest"
+  ! grep -q '0.0.0.0' "$m"
+  ! grep -q '^allow.*179' "$m"
+  [[ "$output" == *"179"* ]]
+}
+
 @test "apply: unrecognised listener is DENIED + warned; --allow exposes it" {
   add_listener 0.0.0.0 8080
   run bash "$APPLY"
