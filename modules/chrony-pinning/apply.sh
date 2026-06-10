@@ -69,15 +69,18 @@ if [ -f "$ONIONARMOR_CHR_MAIN_CONF" ]; then
     backup=$(chr_mainconf_backup)
     [ -e "$backup" ] || cp -p "$ONIONARMOR_CHR_MAIN_CONF" "$backup" \
       || die "cannot back up $ONIONARMOR_CHR_MAIN_CONF -> $backup"
-    if ! grep -Fxq '# --- onionarmor chrony-pinning include block (managed) ---' "$ONIONARMOR_CHR_MAIN_CONF" 2>/dev/null; then
-      {
+    # Always (re)add whichever directive is missing. Only emit the marker header
+    # when it is not already present, so a stale marker can't suppress repair of
+    # a sourcedir/confdir line that is genuinely absent.
+    {
+      if ! grep -Fxq '# --- onionarmor chrony-pinning include block (managed) ---' "$ONIONARMOR_CHR_MAIN_CONF" 2>/dev/null; then
         printf '\n# --- onionarmor chrony-pinning include block (managed) ---\n'
-        chr_main_reads sourcedir "$ONIONARMOR_CHR_SOURCES_DIR" || printf 'sourcedir %s\n' "$ONIONARMOR_CHR_SOURCES_DIR"
-        chr_main_reads confdir "$ONIONARMOR_CHR_CONF_DIR" || printf 'confdir %s\n' "$ONIONARMOR_CHR_CONF_DIR"
-      } >> "$ONIONARMOR_CHR_MAIN_CONF" || die "cannot append include block to $ONIONARMOR_CHR_MAIN_CONF"
-      audit_log chr.apply.include "appended sourcedir/confdir to=$ONIONARMOR_CHR_MAIN_CONF backup=$backup"
-      info "added sourcedir/confdir include block to $ONIONARMOR_CHR_MAIN_CONF (backup: $backup)"
-    fi
+      fi
+      chr_main_reads sourcedir "$ONIONARMOR_CHR_SOURCES_DIR" || printf 'sourcedir %s\n' "$ONIONARMOR_CHR_SOURCES_DIR"
+      chr_main_reads confdir "$ONIONARMOR_CHR_CONF_DIR" || printf 'confdir %s\n' "$ONIONARMOR_CHR_CONF_DIR"
+    } >> "$ONIONARMOR_CHR_MAIN_CONF" || die "cannot append include block to $ONIONARMOR_CHR_MAIN_CONF"
+    audit_log chr.apply.include "ensured sourcedir/confdir in=$ONIONARMOR_CHR_MAIN_CONF backup=$backup"
+    info "ensured sourcedir/confdir include directives in $ONIONARMOR_CHR_MAIN_CONF (backup: $backup)"
   fi
 fi
 
