@@ -79,6 +79,14 @@ for a in "$@"; do
   esac
 done
 printf '%s %s now=%s\n' "$verb" "$unit" "$now" >> "$S/systemctl.log"
+# Optional fault injection: make any verb in the space-separated STUB_FAIL_VERB
+# list fail (optionally only for STUB_FAIL_UNIT) without changing unit state, to
+# exercise service-handoff failure paths.
+if [ -n "${STUB_FAIL_VERB:-}" ] \
+   && case " $STUB_FAIL_VERB " in *" $verb "*) true ;; *) false ;; esac \
+   && { [ -z "${STUB_FAIL_UNIT:-}" ] || [ "$unit" = "${STUB_FAIL_UNIT}" ]; }; then
+  exit 1
+fi
 af="$S/active/$unit"; ef="$S/enabled/$unit"
 case "$verb" in
   is-active)  cat "$af" 2>/dev/null || echo inactive ;;

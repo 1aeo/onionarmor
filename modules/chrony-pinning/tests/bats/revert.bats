@@ -53,3 +53,31 @@ load test_helper
   bash "$REVERT" >/dev/null
   run bash "$AUDIT"; [ "$status" -eq 1 ]   # chrony stopped + sources gone
 }
+
+@test "revert: keeps state + fails when chrony stop doesn't take effect" {
+  bash "$APPLY" >/dev/null
+  # Force `systemctl stop chrony.service` to fail so the unit stays active.
+  STUB_FAIL_VERB=stop STUB_FAIL_UNIT=chrony.service run bash "$REVERT"
+  [ "$status" -ne 0 ]
+  # State marker must survive so the next revert retries reconciliation.
+  [ -f "$ONIONARMOR_CHR_STATE_DIR/state" ]
+  # Must NOT claim a clean revert, and the audit log records the failure.
+  [[ "$output" != *"reverted."* ]]
+  grep -q 'chr.revert.start' "$ONIONARMOR_AUDIT_LOG"
+  grep -q 'chr.revert.fail' "$ONIONARMOR_AUDIT_LOG"
+  ! grep -q 'chr.revert.done' "$ONIONARMOR_AUDIT_LOG"
+}
+
+@test "revert: keeps state + fails when timesyncd won't come back up" {
+  bash "$APPLY" >/dev/null
+  # Force both timesyncd start paths to fail so it never comes active and the
+  # clock is never handed off chrony.
+  STUB_FAIL_VERB="enable start" STUB_FAIL_UNIT=systemd-timesyncd.service \
+    run bash "$REVERT"
+  [ "$status" -ne 0 ]
+  [ -f "$ONIONARMOR_CHR_STATE_DIR/state" ]
+  [[ "$output" != *"reverted."* ]]
+  grep -q 'chr.revert.fail' "$ONIONARMOR_AUDIT_LOG"
+  # chrony must be left running (stop never attempted).
+  ! grep -q 'stop chrony.service' "$STUB_STATE/systemctl.log"
+}
