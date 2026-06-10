@@ -29,7 +29,7 @@ load test_helper
 
 @test "audit: red when the sources file is missing" {
   bash "$APPLY" >/dev/null
-  rm -f "$ONIONARMOR_CHR_SOURCES_DIR/onionarmor-stratum1.sources"
+  rm -f "$ONIONARMOR_CHR_SOURCES_DIR/${ONIONARMOR_CHR_SOURCES_NAME:-onionarmor-stratum1.sources}"
   run bash "$AUDIT"
   [ "$status" -eq 1 ]
   [[ "$output" == *"[FAIL]"*"missing"* ]]
