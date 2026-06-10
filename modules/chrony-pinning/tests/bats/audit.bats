@@ -65,9 +65,17 @@ load test_helper
   [[ "$output" == *"exceeds 50ms"* ]]
 }
 
+@test "audit: red when a negative offset exceeds the threshold" {
+  bash "$APPLY" >/dev/null
+  # -0.2s = 200ms magnitude > 50ms
+  FAKE_OFFSET=-0.200000 run bash "$AUDIT"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"exceeds 50ms"* ]]
+}
+
 @test "audit: green offset reported in ms" {
   bash "$APPLY" >/dev/null
   run bash "$AUDIT"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"last offset 0.012ms"* ]]
+  [[ "$output" == *"last |offset| 0.012ms"* ]]
 }

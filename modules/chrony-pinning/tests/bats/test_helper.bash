@@ -125,7 +125,10 @@ case "$*" in
     echo 'Reference ID    : C0000202 (192.0.2.2)'
     echo 'Stratum         : 2'
     echo 'Ref time (UTC)  : Mon Jun 08 03:00:00 2026'
-    printf 'Last offset     : +%s seconds\n' "${FAKE_OFFSET:-0.000012}"
+    case "${FAKE_OFFSET:-0.000012}" in
+      -*) printf 'Last offset     : %s seconds\n'  "${FAKE_OFFSET:-0.000012}" ;;
+      *)  printf 'Last offset     : +%s seconds\n' "${FAKE_OFFSET:-0.000012}" ;;
+    esac
     echo 'RMS offset      : 0.000020000 seconds'
     echo 'System time     : 0.000001234 seconds slow of NTP time'
     ;;

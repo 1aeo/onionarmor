@@ -73,13 +73,15 @@ off=$(chr_offset_seconds "$trk")
 if [ -z "$off" ]; then
   chr_check yellow "offset within ${CHR_OFFSET_MS}ms" "could not read offset from chronyc tracking"
 else
-  # Compare |offset_seconds| * 1000 <= threshold_ms using awk (float math).
-  within=$(awk -v o="$off" -v t="$CHR_OFFSET_MS" 'BEGIN { print (o*1000 <= t) ? 1 : 0 }')
-  off_ms=$(awk -v o="$off" 'BEGIN { printf "%.3f", o*1000 }')
+  # Compare |offset_seconds| * 1000 <= threshold_ms using awk (float math). Take
+  # the magnitude here too so a negative offset can never slip under the
+  # threshold even if an upstream parser ever stops stripping the sign.
+  within=$(awk -v o="$off" -v t="$CHR_OFFSET_MS" 'BEGIN { a = (o < 0 ? -o : o); print (a*1000 <= t) ? 1 : 0 }')
+  off_ms=$(awk -v o="$off" 'BEGIN { a = (o < 0 ? -o : o); printf "%.3f", a*1000 }')
   if [ "$within" = "1" ]; then
-    chr_check green "offset within ${CHR_OFFSET_MS}ms" "last offset ${off_ms}ms"
+    chr_check green "offset within ${CHR_OFFSET_MS}ms" "last |offset| ${off_ms}ms"
   else
-    chr_check red "offset within ${CHR_OFFSET_MS}ms" "last offset ${off_ms}ms exceeds ${CHR_OFFSET_MS}ms"
+    chr_check red "offset within ${CHR_OFFSET_MS}ms" "last |offset| ${off_ms}ms exceeds ${CHR_OFFSET_MS}ms"
   fi
 fi
 
