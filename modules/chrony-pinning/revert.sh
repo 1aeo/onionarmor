@@ -98,16 +98,16 @@ fi
 
 audit_log chr.revert.done "ok=1"
 if [ "$had_files" -eq 1 ] || [ "$had_backup" -eq 1 ] || [ "$had_state" -eq 1 ]; then
-  cat <<EOF
-
-[chrony-pinning] reverted.
-  sources file : removed ($sources)
-  conf file    : removed ($conf)
-  timesyncd    : unmasked + started ($ONIONARMOR_CHR_TIMESYNCD)
-  chrony       : stopped + disabled (left installed)
-
-NOTE: time is now disciplined by $ONIONARMOR_CHR_TIMESYNCD again.
-EOF
+  echo ""
+  echo "[chrony-pinning] reverted."
+  if [ "$had_files" -eq 1 ]; then
+    echo "  sources file : removed ($sources)"
+    echo "  conf file    : removed ($conf)"
+  fi
+  echo "  timesyncd    : unmasked + started ($ONIONARMOR_CHR_TIMESYNCD)"
+  echo "  chrony       : stopped + disabled (left installed)"
+  echo ""
+  echo "NOTE: time is now disciplined by $ONIONARMOR_CHR_TIMESYNCD again."
 else
   cat <<EOF
 
