@@ -1,12 +1,6 @@
 #!/usr/bin/env bash
 # audit.sh — green/yellow/red status of the ssh-hardening posture. Read-only;
-# never changes host state. Exits non-zero if ANY check is red.
-#
-# Checks:
-#   (a) the managed drop-in is present and matches the rendered posture,
-#   (b) weak DSA + ECDSA host keys are absent (red if present),
-#   (c) the RSA host key is >= the minimum bit strength (yellow if undeterminable),
-#   (d) a pending auto-revert latch is still armed (yellow — confirm then cancel).
+# never changes host state. Exits non-zero if any check is red.
 
 set -euo pipefail
 
@@ -14,59 +8,79 @@ _here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib.sh
 . "$_here/lib.sh"
 
-sshd_parse_flags "$@"
+ssh_parse_flags "$@"
 
+dropin=$(ssh_dropin_path)
 info "ssh-hardening audit"
 printf '\n'
 
-dropin=$(sshd_dropin_path)
-rendered=$(sshd_render_dropin)
-
-# --- (a) drop-in present + matches the rendered posture -------------------
+# --- 1. drop-in present ----------------------------------------------------
 if [ ! -f "$dropin" ]; then
-  oa_status_check red "drop-in present" "$dropin missing — run: onionarmor apply --module ssh-hardening"
-elif [ "$(cat "$dropin")" = "$rendered" ]; then
-  oa_status_check green "drop-in present" "$dropin (matches Mozilla posture)"
-else
-  oa_status_check red "drop-in present" "$dropin DRIFTED from posture — re-apply"
+  oa_status_check yellow "drop-in present" "not applied yet ($dropin missing)"
+  oa_status_summary "ssh-hardening not applied"
 fi
+oa_status_check green "drop-in present" "$dropin"
 
-# --- (b) weak DSA + ECDSA host keys absent --------------------------------
-weak_present=""
-for stem in ssh_host_dsa_key ssh_host_ecdsa_key; do
-  if [ -e "$ONIONARMOR_SSHD_HOSTKEY_DIR/$stem" ] || [ -e "$ONIONARMOR_SSHD_HOSTKEY_DIR/$stem.pub" ]; then
-    weak_present="$weak_present $stem"
+# --- 2. key directives are the hardened values -----------------------------
+# Compare each managed directive to the live drop-in. A drifted/removed
+# directive is red (someone weakened the posture).
+content=$(cat "$dropin" 2>/dev/null || true)
+while IFS= read -r line; do
+  [ -n "$line" ] || continue
+  key=${line%% *}
+  if printf '%s\n' "$content" | grep -qiE "^[[:space:]]*${key}[[:space:]]"; then
+    have=$(printf '%s\n' "$content" | grep -iE "^[[:space:]]*${key}[[:space:]]" | head -1 | sed 's/^[[:space:]]*//')
+    if [ "$have" = "$line" ]; then
+      oa_status_check green "$key" "ok"
+    else
+      oa_status_check red "$key" "drifted: '$have' (want '$line')"
+    fi
+  else
+    oa_status_check red "$key" "missing from drop-in"
   fi
-done
-if [ -n "$weak_present" ]; then
-  oa_status_check red "weak host keys absent" "present:$weak_present — re-apply to prune"
+done <<EOF
+$(ssh_hardening_directives)
+EOF
+
+# --- 3. AllowUsers scoping -------------------------------------------------
+if printf '%s\n' "$content" | grep -qiE '^[[:space:]]*AllowUsers[[:space:]]'; then
+  who=$(printf '%s\n' "$content" | grep -iE '^[[:space:]]*AllowUsers[[:space:]]' | head -1 | sed 's/^[[:space:]]*AllowUsers[[:space:]]*//')
+  oa_status_check green "AllowUsers" "scoped to: $who"
 else
-  oa_status_check green "weak host keys absent" "no DSA/ECDSA host keys in $ONIONARMOR_SSHD_HOSTKEY_DIR"
+  oa_status_check yellow "AllowUsers" "not set — every account may attempt login (pass --allow-user on apply)"
 fi
 
-# --- (c) RSA host key >= minimum strength ---------------------------------
-rsa_key="$ONIONARMOR_SSHD_HOSTKEY_DIR/ssh_host_rsa_key"
-if [ ! -f "$rsa_key" ]; then
-  oa_status_check yellow "RSA host key strength" "no RSA host key at $rsa_key (ed25519-only is fine)"
+# --- 4. config validity ----------------------------------------------------
+if ssh_config_test >/dev/null 2>&1; then
+  oa_status_check green "sshd -t" "configuration is valid"
 else
-  bits=$(sshd_rsa_bits "$rsa_key")
-  case "$bits" in
-    (*[!0-9]*|"")
-      oa_status_check yellow "RSA host key strength" "could not determine bits for $rsa_key" ;;
-    (*)
-      if [ "$bits" -ge "$ONIONARMOR_SSHD_RSA_MIN_BITS" ]; then
-        oa_status_check green "RSA host key strength" "$bits bits (>= $ONIONARMOR_SSHD_RSA_MIN_BITS)"
-      else
-        oa_status_check red "RSA host key strength" "$bits bits (< $ONIONARMOR_SSHD_RSA_MIN_BITS) — re-apply to regenerate"
-      fi ;;
-  esac
+  oa_status_check red "sshd -t" "sshd rejects the current configuration"
 fi
 
-# --- (d) pending auto-revert latch ----------------------------------------
-if oa_latch_is_armed "$SSHD_LATCH_MODULE"; then
-  oa_status_check yellow "safety latch" "auto-revert pending — confirm access then cancel: $(oa_latch_cancel_cmd "$SSHD_LATCH_MODULE")"
+# --- 5. weak host keys -----------------------------------------------------
+weak=$(ssh_weak_hostkeys | tr '\n' ' ' | sed 's/ *$//')
+if [ -n "$weak" ]; then
+  oa_status_check yellow "weak host keys" "still present: $weak (apply removes these)"
 else
-  oa_status_check green "safety latch" "none pending (no auto-revert armed)"
+  oa_status_check green "weak host keys" "no DSA/ECDSA host keys"
 fi
 
-oa_status_summary "one or more RED checks — ssh-hardening posture is broken or drifted"
+# --- 6. RSA host-key strength ---------------------------------------------
+rsa_bits=$(ssh_rsa_bits)
+if [ -z "$rsa_bits" ]; then
+  oa_status_check green "RSA host key" "no RSA host key present"
+elif [ "$rsa_bits" -ge "$ONIONARMOR_SSH_RSA_MIN_BITS" ]; then
+  oa_status_check green "RSA host key" "$rsa_bits-bit (>= $ONIONARMOR_SSH_RSA_MIN_BITS)"
+else
+  oa_status_check yellow "RSA host key" "$rsa_bits-bit (< $ONIONARMOR_SSH_RSA_MIN_BITS — apply regrows it)"
+fi
+
+# --- 7. pending safety latch ----------------------------------------------
+job=$(ssh_latch_pending)
+if [ -n "$job" ]; then
+  oa_status_check yellow "safety latch" "at job $job still PENDING — confirm your session then: atrm $job"
+else
+  oa_status_check green "safety latch" "no pending auto-restore job"
+fi
+
+oa_status_summary "ssh-hardening posture is broken (a hardened directive drifted or sshd -t fails)"

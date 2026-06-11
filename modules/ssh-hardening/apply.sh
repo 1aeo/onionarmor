@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# MODULE: ssh hardening — Mozilla-OpenSSH sshd drop-in (no root/password login, modern Kex/Cipher/MAC, no forwarding) + weak host-key pruning; 5-min SSH safety latch. Medium-HIGH risk; recommended-off.
+# MODULE: ssh-hardening — Mozilla OpenSSH "modern" sshd_config.d drop-in (no root/password login, modern KEX/ciphers/MACs), weak host-key cleanup, 5-min SSH safety latch.
 #
-# apply.sh — write the Mozilla-OpenSSH hardening drop-in to
-# 99-onionarmor-hardening.conf, arm a 5-minute auto-revert latch, validate with
-# `sshd -t`, reload sshd, then prune weak host keys. Idempotent; --dry-run.
+# apply.sh — write the hardening drop-in, validate with `sshd -t`, schedule a
+# 5-minute auto-restore latch, THEN reload sshd. Weak DSA/ECDSA host keys are
+# removed and a sub-4096-bit RSA host key is regrown. Idempotent; --dry-run.
 
 set -euo pipefail
 
@@ -11,228 +11,238 @@ _here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib.sh
 . "$_here/lib.sh"
 
-sshd_parse_flags "$@"
+ssh_parse_flags "$@"
 
-dropin=$(sshd_dropin_path)
-backup=$(sshd_backup_path)
-preexist_marker=$(sshd_preexist_path)
-restore=$(sshd_restore_path)
-rendered=$(sshd_render_dropin)
-
-# ---------------------------------------------------------------------------
-# --cancel-safety-latch: disarm a pending auto-revert and exit. Independent of
-# any config change so the operator can run it the moment they've confirmed they
-# can still SSH in.
-# ---------------------------------------------------------------------------
-if [ "$SSHD_CANCEL_LATCH" -eq 1 ]; then
-  if oa_latch_cancel "$SSHD_LATCH_MODULE"; then
-    info "ssh-hardening: pending safety latch cancelled"
-  else
-    info "ssh-hardening: no safety latch was armed (nothing to cancel)"
-  fi
-  exit 0
-fi
+dropin=$(ssh_dropin_path)
+bak=$(ssh_backup_path)
+latch_state=$(ssh_latch_state_path)
+rendered=$(ssh_render_dropin)
+allow_set=$(ssh_allow_user_set)
 
 # ---------------------------------------------------------------------------
-# Dry run: print the plan + rendered drop-in + the planned validation + latch
-# plan, change nothing.
+# Dry run: print the plan + rendered drop-in, change nothing.
 # ---------------------------------------------------------------------------
-if [ "$SSHD_DRY_RUN" -eq 1 ]; then
+if [ "$SSH_DRY_RUN" -eq 1 ]; then
   info "dry-run: ssh-hardening (no host changes)"
   cat <<EOF
 
 PLAN
-  drop-in           -> $dropin
-  validate          -> $ONIONARMOR_SSHD_SSHD_CMD -t
-  reload            -> $ONIONARMOR_SSHD_SYSTEMCTL reload $ONIONARMOR_SSHD_UNIT
-  safety latch      -> $([ "$SSHD_SAFETY_LATCH" -eq 1 ] && echo "at now + $ONIONARMOR_LATCH_TIMEOUT_MIN min (auto-revert: restore prior sshd config + reload)" || echo "DISABLED (--no-safety-latch; console access required)")
-  host keys         -> remove ssh_host_dsa_key* + ssh_host_ecdsa_key*; regen RSA if < ${ONIONARMOR_SSHD_RSA_MIN_BITS} bits ($ONIONARMOR_SSHD_HOSTKEY_DIR)
+  drop-in        -> $dropin
+  AllowUsers     -> ${allow_set:-<none detected — AllowUsers omitted to avoid lockout>}
+  host keys      -> $([ "$SSH_HOST_KEYS" -eq 1 ] && echo "remove DSA/ECDSA; regrow RSA if < $ONIONARMOR_SSH_RSA_MIN_BITS-bit" || echo "untouched (--no-host-keys)")
+  safety latch   -> $([ "$SSH_SAFETY_LATCH" -eq 1 ] && echo "at now + $SSH_LATCH_MIN min (auto-restore prior config + reload $ONIONARMOR_SSH_UNIT)" || echo "DISABLED (--no-safety-latch)")
 
---- drop-in ($dropin) ---
+--- rendered drop-in ($dropin) ---
 $rendered
 EOF
+  if [ -z "$allow_set" ]; then
+    printf '\nWARNING: no logged-in / configured users detected — AllowUsers will be OMITTED.\n'
+    printf '  Pass --allow-user <name> to scope SSH to specific accounts.\n'
+  fi
   exit 0
 fi
 
-audit_log sshd.apply.start "dropin=$dropin latch=$SSHD_SAFETY_LATCH"
+audit_log ssh.apply.start "latch=$SSH_SAFETY_LATCH host_keys=$SSH_HOST_KEYS allow=${allow_set:-none}"
+mkdir -p "$ONIONARMOR_SSH_STATE_DIR" || die "cannot create state dir $ONIONARMOR_SSH_STATE_DIR"
+mkdir -p "$ONIONARMOR_SSH_CONFD_DIR" || die "cannot create $ONIONARMOR_SSH_CONFD_DIR"
 
 # ---------------------------------------------------------------------------
-# Idempotency: if the drop-in is already byte-identical AND (when requested) a
-# latch is already armed, there is nothing to do — and we must NOT stack a fresh
-# latch. We still run host-key pruning (cheap, best-effort, self-idempotent).
+# Idempotency: drop-in already byte-matches AND no latch needs reconciling AND
+# host keys already clean -> nothing to do.
 # ---------------------------------------------------------------------------
-dropin_current=0
 if [ -f "$dropin" ] && [ "$(cat "$dropin")" = "$rendered" ]; then
-  dropin_current=1
+  pending=$(ssh_latch_pending)
+  weak=$(ssh_weak_hostkeys)
+  rsa_bits=$(ssh_rsa_bits)
+  rsa_small=0
+  if [ "$SSH_HOST_KEYS" -eq 1 ] && [ -n "$rsa_bits" ] && [ "$rsa_bits" -lt "$ONIONARMOR_SSH_RSA_MIN_BITS" ]; then rsa_small=1; fi
+  host_keys_clean=1
+  if [ "$SSH_HOST_KEYS" -eq 1 ] && { [ -n "$weak" ] || [ "$rsa_small" -eq 1 ]; }; then host_keys_clean=0; fi
+  if [ "$host_keys_clean" -eq 1 ] && { [ "$SSH_SAFETY_LATCH" -eq 1 ] || [ -z "$pending" ]; }; then
+    info "drop-in already current and host keys clean — nothing to do"
+    printf '\n[ssh-hardening] already applied (no changes).\n'
+    if [ -n "$pending" ]; then
+      printf '  NOTE: a safety latch is still pending (at job %s). Cancel it once your session is confirmed: atrm %s\n' "$pending" "$pending"
+    fi
+    exit 0
+  fi
 fi
 
 # ---------------------------------------------------------------------------
-# 1. Back up the pre-apply state so the latch's restore script can put it back.
-#    Record whether the drop-in pre-existed (so restore removes vs. restores).
+# 1. Back up the prior drop-in (so the latch can restore it). If none existed,
+#    we leave no .bak — the latch then removes our drop-in instead.
 # ---------------------------------------------------------------------------
-mkdir -p "$ONIONARMOR_SSHD_STATE_DIR" || die "cannot create state dir $ONIONARMOR_SSHD_STATE_DIR"
-mkdir -p "$ONIONARMOR_SSHD_DROPIN_DIR" || die "cannot create drop-in dir $ONIONARMOR_SSHD_DROPIN_DIR"
-
 if [ -f "$dropin" ]; then
-  cp -p "$dropin" "$backup" \
-    || audit_fail_die sshd.apply.fail "stage=backup" "failed to back up $dropin -> $backup"
-  printf '1\n' > "$preexist_marker"
+  cp -p "$dropin" "$bak" || die "cannot back up existing drop-in to $bak"
+  audit_log ssh.apply.backup "saved=$bak"
 else
-  rm -f "$backup" 2>/dev/null || true
-  printf '0\n' > "$preexist_marker"
+  rm -f "$bak" 2>/dev/null || true
 fi
-preexisted=$(cat "$preexist_marker")
 
 # ---------------------------------------------------------------------------
-# 2. Render the restore script + ARM the latch BEFORE touching the live config,
-#    so a reload that locks us out always has a scheduled undo. A failure to arm
-#    is fatal (a risky change with no auto-revert is exactly what the latch
-#    exists to prevent) unless --no-safety-latch was passed.
+# 2. Write the new drop-in, then validate the whole sshd config with `sshd -t`.
+#    On failure, restore the prior state and abort WITHOUT reloading.
 # ---------------------------------------------------------------------------
-latch_armed=0
-if [ "$SSHD_SAFETY_LATCH" -eq 1 ]; then
-  if oa_latch_is_armed "$SSHD_LATCH_MODULE" && [ "$dropin_current" -eq 1 ]; then
-    info "drop-in already current and a safety latch is already armed — not stacking a new latch"
-  else
-    # Check if there's a stale latch to cancel AFTER we arm the new one.
-    had_latch=0
-    old_jobid=""
-    if oa_latch_is_armed "$SSHD_LATCH_MODULE"; then
-      had_latch=1
-      # Save the old job ID before arming a new latch (which will overwrite it).
-      latch_dir=$(oa_latch_dir "$SSHD_LATCH_MODULE")
-      old_jobid=$(cat "$latch_dir/jobid" 2>/dev/null || true)
+tmp="$dropin.tmp.$$"
+printf '%s\n' "$rendered" > "$tmp" || { rm -f "$tmp"; die "cannot write $tmp"; }
+mv "$tmp" "$dropin" || { rm -f "$tmp"; die "cannot install drop-in $dropin"; }
+
+if ! test_out=$(ssh_config_test); then
+  warn "sshd -t rejected the hardened config — restoring prior state, NOT reloading:"
+  printf '%s\n' "$test_out" >&2
+  if [ -f "$bak" ]; then cp -p "$bak" "$dropin"; else rm -f "$dropin"; fi
+  audit_fail_die ssh.apply.fail "stage=sshd-t" "hardened config failed sshd -t (prior config restored)"
+fi
+audit_log ssh.apply.dropin "wrote=$dropin"
+
+if [ -z "$allow_set" ]; then
+  warn "no logged-in / configured users detected — AllowUsers OMITTED (pass --allow-user to scope logins)"
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Host-key surgery (optional): remove weak DSA/ECDSA keys, regrow small RSA.
+#    Backups of removed/old keys go to the state dir so revert can restore them.
+# ---------------------------------------------------------------------------
+if [ "$SSH_HOST_KEYS" -eq 1 ]; then
+  keybak="$ONIONARMOR_SSH_STATE_DIR/hostkeys.bak"
+  mkdir -p "$keybak" || warn "cannot create host-key backup dir $keybak"
+  while IFS= read -r wk; do
+    [ -n "$wk" ] || continue
+    if cp -p "$wk" "$keybak/" 2>/dev/null && rm -f "$wk"; then
+      info "removed weak host key: $wk"
+      audit_log ssh.apply.hostkey "removed=$wk"
+    else
+      warn "could not remove weak host key: $wk"
     fi
-    sshd_render_restore "$dropin" "$backup" "$preexisted" \
-      "$ONIONARMOR_SSHD_SSHD_CMD" "$ONIONARMOR_SSHD_SYSTEMCTL" "$ONIONARMOR_SSHD_UNIT" > "$restore" \
-      || die "cannot render restore script -> $restore"
-    chmod +x "$restore" 2>/dev/null || true
-    if ! oa_latch_arm "$SSHD_LATCH_MODULE" "$restore" "$ONIONARMOR_LATCH_TIMEOUT_MIN"; then
-      # Could not schedule — abort WITHOUT touching the live config. Roll back the
-      # backup/marker bookkeeping so a retry starts clean.
-      [ "$preexisted" = "0" ] && rm -f "$preexist_marker" 2>/dev/null || true
-      audit_fail_die sshd.apply.fail "stage=latch-arm" "could not arm the SSH safety latch (is atd installed and running? 'apt install at && systemctl enable --now atd') — re-run with --no-safety-latch only if you have console access"
+  done <<EOF
+$(ssh_weak_hostkeys)
+EOF
+
+  rsa_bits=$(ssh_rsa_bits)
+  if [ -n "$rsa_bits" ] && [ "$rsa_bits" -lt "$ONIONARMOR_SSH_RSA_MIN_BITS" ]; then
+    info "RSA host key is $rsa_bits-bit (< $ONIONARMOR_SSH_RSA_MIN_BITS) — regenerating"
+    rsa_key="$ONIONARMOR_SSH_HOSTKEY_DIR/ssh_host_rsa_key"
+    cp -p "$rsa_key" "$keybak/" 2>/dev/null || true
+    cp -p "$rsa_key.pub" "$keybak/" 2>/dev/null || true
+    rm -f "$rsa_key" "$rsa_key.pub"
+    if "$ONIONARMOR_SSH_KEYGEN" -q -t rsa -b "$ONIONARMOR_SSH_RSA_MIN_BITS" -N '' -f "$rsa_key" 2>/dev/null; then
+      audit_log ssh.apply.hostkey "regen=rsa bits=$ONIONARMOR_SSH_RSA_MIN_BITS"
+      info "regenerated RSA host key at $ONIONARMOR_SSH_RSA_MIN_BITS-bit"
+    else
+      warn "ssh-keygen failed to regrow RSA host key — restoring the old one"
+      cp -p "$keybak/ssh_host_rsa_key" "$rsa_key" 2>/dev/null || true
+      cp -p "$keybak/ssh_host_rsa_key.pub" "$rsa_key.pub" 2>/dev/null || true
     fi
-    # Cancel the old latch job (using the saved job ID, not the new one).
-    if [ "$had_latch" -eq 1 ] && [ -n "$old_jobid" ] && [ "$old_jobid" != "?" ]; then
-      "$ONIONARMOR_ATRM_CMD" "$old_jobid" >/dev/null 2>&1 || true
-    fi
-    latch_armed=1
   fi
-else
-  warn "--no-safety-latch: no auto-revert scheduled — a wrong config will lock you out. Make sure you have console access."
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Write the drop-in (idempotent via oa_write_if_changed).
+# 4. SAFETY LATCH: schedule the auto-restore `at` job BEFORE reloading, so a
+#    config the operator's client can't authenticate against cannot strand them.
 # ---------------------------------------------------------------------------
-if oa_write_if_changed "$dropin" "$rendered"; then
-  audit_log sshd.apply.dropin "wrote=$dropin"
-  info "wrote drop-in: $dropin"
-  wrote=1
-else
-  info "drop-in already current: $dropin"
-  wrote=0
-fi
-
-# ---------------------------------------------------------------------------
-# 4. VALIDATE the resulting config. NEVER reload a config that fails `sshd -t`:
-#    remove our drop-in (restore the backup if one pre-existed), cancel the
-#    latch, and die.
-# ---------------------------------------------------------------------------
-if ! "$ONIONARMOR_SSHD_SSHD_CMD" -t >/dev/null 2>&1; then
-  if [ "$preexisted" = "1" ] && [ -f "$backup" ]; then
-    cp -p "$backup" "$dropin" 2>/dev/null || rm -f "$dropin"
-  else
-    rm -f "$dropin"
+latch_job=""
+if [ "$SSH_SAFETY_LATCH" -eq 1 ] && [ "${ONIONARMOR_SKIP_RELOAD:-}" != "yes" ]; then
+  if ! command -v "$ONIONARMOR_SSH_AT" >/dev/null 2>&1; then
+    die "ssh-hardening: 'at' not found — needed for the SSH safety latch. Install it (apt install at) or re-run with --no-safety-latch (console access required)."
   fi
-  [ "$latch_armed" -eq 1 ] && oa_latch_cancel "$SSHD_LATCH_MODULE" >/dev/null 2>&1
-  audit_fail_die sshd.apply.fail "stage=validate" "'$ONIONARMOR_SSHD_SSHD_CMD -t' rejected the hardened config — drop-in removed, latch cancelled, sshd NOT reloaded"
+  old_job=$(ssh_latch_pending)
+  if [ -n "$old_job" ]; then
+    "$ONIONARMOR_SSH_ATRM" "$old_job" >/dev/null 2>&1 \
+      && info "cancelled previous safety-latch at job $old_job" \
+      || warn "could not cancel previous safety-latch at job $old_job"
+  fi
+  latch_out=$(ssh_latch_command | "$ONIONARMOR_SSH_AT" now + "$SSH_LATCH_MIN" minutes 2>&1 || true)
+  latch_job=$(printf '%s\n' "$latch_out" | grep -oE 'job[[:space:]]+[0-9]+' | awk '{print $2}' | head -1)
+  if [ -z "$latch_job" ]; then
+    # Could not schedule the latch: restore prior config and refuse to reload.
+    if [ -f "$bak" ]; then cp -p "$bak" "$dropin"; else rm -f "$dropin"; fi
+    audit_fail_die ssh.apply.fail "stage=latch-parse output=$latch_out" "could not schedule the safety latch — restored prior config, NOT reloading (use --no-safety-latch with console access to skip)"
+  fi
+elif [ "$SSH_SAFETY_LATCH" -eq 1 ] && [ "${ONIONARMOR_SKIP_RELOAD:-}" = "yes" ]; then
+  old_job=$(ssh_latch_pending)
+  if [ -n "$old_job" ]; then
+    "$ONIONARMOR_SSH_ATRM" "$old_job" >/dev/null 2>&1 \
+      && info "cancelled previous safety-latch at job $old_job (ONIONARMOR_SKIP_RELOAD=yes)" \
+      || warn "could not cancel previous safety-latch at job $old_job"
+  fi
+  info "ONIONARMOR_SKIP_RELOAD=yes — skipping safety latch (no reload will occur)"
+else
+  old_job=$(ssh_latch_pending)
+  if [ -n "$old_job" ]; then
+    "$ONIONARMOR_SSH_ATRM" "$old_job" >/dev/null 2>&1 \
+      && { info "cancelled previous safety-latch at job $old_job (--no-safety-latch)"; rm -f "$latch_state" 2>/dev/null || true; } \
+      || warn "could not cancel previous safety-latch at job $old_job"
+  fi
+  warn "--no-safety-latch: no auto-restore scheduled — make sure you have console access"
 fi
-info "validated: $ONIONARMOR_SSHD_SSHD_CMD -t passed"
 
 # ---------------------------------------------------------------------------
-# 5. Reload sshd so the new config takes effect on the next connection. (Active
-#    sessions are unaffected — hence the latch protects the NEXT login.)
+# 5. Reload sshd (config already validated). Active connections are NOT dropped
+#    by a reload; the latch protects the NEXT login attempt.
 # ---------------------------------------------------------------------------
 reload_failed=0
 if [ "${ONIONARMOR_SKIP_RELOAD:-}" = "yes" ]; then
-  info "ONIONARMOR_SKIP_RELOAD=yes — skipping sshd reload"
-elif "$ONIONARMOR_SSHD_SYSTEMCTL" reload "$ONIONARMOR_SSHD_UNIT" >/dev/null 2>&1; then
-  info "reloaded sshd ($ONIONARMOR_SSHD_SYSTEMCTL reload $ONIONARMOR_SSHD_UNIT)"
+  info "ONIONARMOR_SKIP_RELOAD=yes — drop-in written but sshd not reloaded"
 else
-  warn "$ONIONARMOR_SSHD_SYSTEMCTL reload $ONIONARMOR_SSHD_UNIT returned nonzero — config written but sshd may not have picked it up"
-  reload_failed=1
+  if "$ONIONARMOR_SSH_SYSTEMCTL" reload "$ONIONARMOR_SSH_UNIT" >/dev/null 2>&1; then
+    info "reloaded $ONIONARMOR_SSH_UNIT"
+  else
+    reload_failed=1
+    warn "systemctl reload $ONIONARMOR_SSH_UNIT failed — config is staged but not live"
+  fi
+fi
+
+# Record the latch job only after the reload attempt, so revert/audit can see it.
+if [ -n "$latch_job" ]; then
+  if printf '%s\n' "$latch_job" > "$latch_state" 2>/dev/null; then
+    audit_log ssh.apply.latch "job=$latch_job minutes=$SSH_LATCH_MIN"
+  else
+    "$ONIONARMOR_SSH_ATRM" "$latch_job" >/dev/null 2>&1 \
+      && warn "could not record latch state — cancelled job $latch_job to avoid an untracked auto-restore" \
+      || warn "could not record latch state AND failed to cancel job $latch_job — run: atrm $latch_job"
+    latch_job=""
+  fi
 fi
 
 # ---------------------------------------------------------------------------
-# 6. Host keys (best-effort, AFTER the config is safely applied — warn, never
-#    die): prune weak DSA + ECDSA host keys, regenerate a sub-min-bit RSA key.
+# 6. Verify (default on): the drop-in is present and sshd -t still passes.
 # ---------------------------------------------------------------------------
-removed_keys=""
-for stem in ssh_host_dsa_key ssh_host_ecdsa_key; do
-  for f in "$ONIONARMOR_SSHD_HOSTKEY_DIR/$stem" "$ONIONARMOR_SSHD_HOSTKEY_DIR/$stem.pub"; do
-    if [ -e "$f" ]; then
-      if rm -f "$f"; then
-        removed_keys="$removed_keys $f"
-      else
-        warn "could not remove weak host key: $f"
-      fi
-    fi
-  done
-done
-[ -n "$removed_keys" ] && { audit_log sshd.apply.hostkeys "removed=$removed_keys"; info "removed weak host keys:$removed_keys"; }
-
-rsa_key="$ONIONARMOR_SSHD_HOSTKEY_DIR/ssh_host_rsa_key"
-rsa_regenerated=0
-if [ -f "$rsa_key" ]; then
-  bits=$(sshd_rsa_bits "$rsa_key")
-  case "$bits" in
-    (*[!0-9]*|"")
-      warn "could not determine RSA host-key strength for $rsa_key — leaving as-is" ;;
-    (*)
-      if [ "$bits" -lt "$ONIONARMOR_SSHD_RSA_MIN_BITS" ]; then
-        info "RSA host key is $bits bits (< $ONIONARMOR_SSHD_RSA_MIN_BITS) — regenerating at $ONIONARMOR_SSHD_RSA_MIN_BITS"
-        rm -f "$rsa_key" "$rsa_key.pub" 2>/dev/null || true
-        if "$ONIONARMOR_SSHD_KEYGEN_CMD" -q -t rsa -b "$ONIONARMOR_SSHD_RSA_MIN_BITS" -N '' -f "$rsa_key" >/dev/null 2>&1; then
-          rsa_regenerated=1
-          audit_log sshd.apply.hostkeys "regenerated=$rsa_key bits=$ONIONARMOR_SSHD_RSA_MIN_BITS"
-          info "regenerated RSA host key at $ONIONARMOR_SSHD_RSA_MIN_BITS bits: $rsa_key"
-        else
-          warn "ssh-keygen failed to regenerate $rsa_key — leaving the weak key in place"
-        fi
-      fi ;;
-  esac
+verify_failed=0
+if [ "$SSH_VERIFY" -eq 1 ]; then
+  if [ -f "$dropin" ] && ssh_config_test >/dev/null 2>&1; then
+    info "verify: drop-in present and sshd -t passes"
+  else
+    warn "verify: drop-in missing or sshd -t failing after apply"; verify_failed=1
+  fi
 fi
 
-audit_log sshd.apply.done "wrote=$wrote latch_armed=$latch_armed reload_failed=$reload_failed rsa_regenerated=$rsa_regenerated"
+audit_log ssh.apply.done "reload_failed=$reload_failed verify_failed=$verify_failed latch_job=${latch_job:-none}"
 
-# ---------------------------------------------------------------------------
-# 7. Summary. When the latch is armed, prominently print BOTH cancel commands and
-#    tell the operator to confirm access THEN cancel within the window.
-# ---------------------------------------------------------------------------
 cat <<EOF
 
 [ssh-hardening] applied.
-  drop-in : $dropin
-  posture : Mozilla OpenSSH guidelines (no root/password login, modern algos, no forwarding)
+  drop-in    : $dropin
+  AllowUsers : ${allow_set:-<omitted>}
+  host keys  : $([ "$SSH_HOST_KEYS" -eq 1 ] && echo "weak removed; RSA >= $ONIONARMOR_SSH_RSA_MIN_BITS-bit" || echo "untouched")
 EOF
-if [ "$latch_armed" -eq 1 ]; then
+if [ -n "$latch_job" ]; then
   cat <<EOF
 
-  *** SSH SAFETY LATCH ARMED — sshd config auto-reverts in $ONIONARMOR_LATCH_TIMEOUT_MIN minutes. ***
-  Open a NEW ssh session now and confirm you can still log in. THEN cancel within
-  $ONIONARMOR_LATCH_TIMEOUT_MIN minutes, or the host auto-reverts to its prior sshd config:
+  *** SSH SAFETY LATCH ACTIVE — the prior config auto-restores in $SSH_LATCH_MIN minutes. ***
+  Open a NEW SSH session to confirm you can still log in, THEN cancel the latch:
 
-      atrm $OA_LATCH_JOBID
-      # (or, generally:)  $(oa_latch_cancel_cmd "$SSHD_LATCH_MODULE")
-  If you do NOT cancel and you cannot log in, the latch restores the old config for you.
+      atrm $latch_job
+
+  If you do NOT cancel it, onionarmor will restore the previous SSH config
+  automatically (so a bad key/AllowUsers cannot lock you out).
 EOF
 fi
 cat <<EOF
 
 Check status any time:  onionarmor audit  --module ssh-hardening
-Undo the posture:       onionarmor revert --module ssh-hardening
+Undo the hardening:     onionarmor revert --module ssh-hardening
 EOF
 
-[ "$reload_failed" -eq 0 ] || { warn "apply finished but the sshd reload reported problems above"; exit 2; }
+if [ "$verify_failed" -ne 0 ] || [ "$reload_failed" -ne 0 ]; then
+  warn "apply finished with problems (see above)"; exit 2
+fi

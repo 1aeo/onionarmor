@@ -1,137 +1,154 @@
 #!/usr/bin/env bats
-# package-minimization apply.sh — dry-run, confirm gate, purge, role skip,
-# idempotency, state recording, audit-log lines.
+# package-minimization apply.sh — removal of installed target packages, the
+# removed.list record, role gating, dry-run, the confirm prompt, idempotency,
+# and audit-log entries.
 
 load test_helper
+
+removed_list() { cat "$ONIONARMOR_PM_STATE_DIR/removed.list" 2>/dev/null; }
 
 @test "apply: syntax check (bash -n)" {
   run bash -n "$APPLY"
   [ "$status" -eq 0 ]
 }
 
-@test "apply --dry-run: lists present removable pkgs + reclaim estimate, changes nothing" {
-  install_pkg gcc 5000
-  install_pkg tcpdump 1200
-  install_pkg vim 3000   # not in the removable set — must be ignored
-  run bash "$APPLY" --dry-run
+@test "apply: removes installed target packages and records removed.list" {
+  set_role relay-guard
+  seed_pkg gcc 5000
+  seed_pkg make 1200
+  seed_pkg gdb 8000
+  run bash "$APPLY" --yes
   [ "$status" -eq 0 ]
-  [[ "$output" == *"dry-run: package-minimization"* ]]
-  [[ "$output" == *"gcc"* ]]
-  [[ "$output" == *"tcpdump"* ]]
-  [[ "$output" != *"vim"* ]]
-  [[ "$output" == *"Reclaimable"* ]]
-  # Nothing purged.
-  [ ! -s "$STUB_APT_LOG" ]
-}
-
-@test "apply --dry-run: purges nothing and writes no state" {
-  install_pkg gcc 5000
-  run bash "$APPLY" --dry-run
-  [ "$status" -eq 0 ]
-  ! grep -q 'purge' "$STUB_APT_LOG"
-  [ ! -e "$ONIONARMOR_PKG_STATE_DIR/removed.list" ]
-}
-
-@test "apply: bare run without --confirm REFUSES and purges nothing" {
-  install_pkg gcc 5000
-  install_pkg gdb 2000
-  run bash "$APPLY"
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"refusing to remove"* ]]
-  ! grep -q 'purge' "$STUB_APT_LOG"
-  [ ! -e "$ONIONARMOR_PKG_STATE_DIR/removed.list" ]
-}
-
-@test "apply: bare run with nothing installed is a clean no-op (no confirm needed)" {
-  run bash "$APPLY"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"nothing to do"* ]]
-  ! grep -q 'purge' "$STUB_APT_LOG"
-}
-
-@test "apply --confirm: purges exactly the installed removable packages" {
-  install_pkg gcc 5000
-  install_pkg tcpdump 1200
-  install_pkg strace 800
-  install_pkg vim 3000     # not removable — must NOT be purged
-  run bash "$APPLY" --confirm
-  [ "$status" -eq 0 ]
-  apt_purged gcc
-  apt_purged tcpdump
-  apt_purged strace
-  ! apt_purged vim
   [[ "$output" == *"applied."* ]]
+  # The packages are gone from the fake DB.
+  ! pkg_installed gcc
+  ! pkg_installed make
+  ! pkg_installed gdb
+  # ...recorded for revert (sorted, deduped).
+  [ -f "$ONIONARMOR_PM_STATE_DIR/removed.list" ]
+  [[ "$(removed_list)" == *"gcc"* ]]
+  [[ "$(removed_list)" == *"make"* ]]
+  [[ "$(removed_list)" == *"gdb"* ]]
+  # apt-get remove was actually invoked.
+  grep -q 'remove -y' "$PM_APT_LOG"
 }
 
-@test "apply --confirm: records removed packages to the state dir" {
-  install_pkg gcc 5000
-  install_pkg gdb 2000
-  run bash "$APPLY" --confirm
+@test "apply: only installed targets are removed (absent ones ignored)" {
+  set_role relay-mid
+  seed_pkg gcc 5000
+  # make/gdb/tcpdump/strace are NOT installed.
+  run bash "$APPLY" --yes
   [ "$status" -eq 0 ]
-  state="$ONIONARMOR_PKG_STATE_DIR/removed.list"
-  [ -f "$state" ]
-  grep -qx gcc "$state"
-  grep -qx gdb "$state"
+  ! pkg_installed gcc
+  [[ "$(removed_list)" == *"gcc"* ]]
+  ! [[ "$(removed_list)" == *"make"* ]]
 }
 
-@test "apply --confirm: a package not installed is skipped (only installed ones purged)" {
-  install_pkg gcc 5000   # gdb/tcpdump deliberately NOT installed
-  run bash "$APPLY" --confirm
-  [ "$status" -eq 0 ]
-  apt_purged gcc
-  ! apt_purged gdb
-  ! apt_purged tcpdump
-}
-
-@test "apply --confirm: idempotent — second run finds nothing left to remove" {
-  install_pkg gcc 5000
-  bash "$APPLY" --confirm >/dev/null
-  : > "$STUB_APT_LOG"     # clear the log so we can assert the second run purges nothing
-  run bash "$APPLY" --confirm
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"nothing to do"* ]]
-  ! grep -q 'purge' "$STUB_APT_LOG"
-}
-
-@test "apply: build-host role SKIPS removal entirely (no purge), even with --confirm" {
+@test "apply: role=build-host skips (no removal)" {
   set_role build-host
-  install_pkg gcc 5000
-  install_pkg tcpdump 1200
-  run bash "$APPLY" --confirm
+  seed_pkg gcc 5000
+  seed_pkg gdb 8000
+  run bash "$APPLY" --yes
   [ "$status" -eq 0 ]
+  [[ "$output" == *"skipping"* ]]
   [[ "$output" == *"build-host"* ]]
-  [[ "$output" == *"skipping package removal"* ]]
-  ! grep -q 'purge' "$STUB_APT_LOG"
-  [ ! -e "$ONIONARMOR_PKG_STATE_DIR/removed.list" ]
+  # Nothing removed.
+  pkg_installed gcc
+  pkg_installed gdb
+  [ ! -e "$ONIONARMOR_PM_STATE_DIR/removed.list" ]
+  ! grep -q 'remove -y' "$PM_APT_LOG"
 }
 
-@test "apply: a non-build-host role does NOT skip" {
-  set_role tor-relay
-  install_pkg gcc 5000
-  run bash "$APPLY" --confirm
+@test "apply: role=ci skips (no removal)" {
+  set_role ci
+  seed_pkg gcc 5000
+  run bash "$APPLY" --yes
   [ "$status" -eq 0 ]
-  apt_purged gcc
+  [[ "$output" == *"skipping"* ]]
+  pkg_installed gcc
 }
 
-@test "apply --confirm: writes audit-log entries" {
-  install_pkg gcc 5000
-  run bash "$APPLY" --confirm
+@test "apply: unset/other role proceeds (toolchain removable on a relay)" {
+  # No role file written at all.
+  seed_pkg gcc 5000
+  run bash "$APPLY" --yes
   [ "$status" -eq 0 ]
-  grep -q 'pkg.apply.start' "$ONIONARMOR_AUDIT_LOG"
-  grep -q 'pkg.apply.removed' "$ONIONARMOR_AUDIT_LOG"
-  grep -q 'pkg.apply.done' "$ONIONARMOR_AUDIT_LOG"
+  ! pkg_installed gcc
 }
 
-@test "apply: --confirm via oa_confirm yes (no flag) purges" {
-  ONIONARMOR_AUTO_CONFIRM=yes install_pkg gcc 5000
-  install_pkg gcc 5000
-  ONIONARMOR_AUTO_CONFIRM=yes run bash "$APPLY"
+@test "apply --dry-run: removes nothing, prints the plan + reclaimable total" {
+  set_role relay-exit
+  seed_pkg gcc 5000
+  seed_pkg gdb 8000
+  run bash "$APPLY" --dry-run
   [ "$status" -eq 0 ]
-  apt_purged gcc
+  [[ "$output" == *"dry-run"* ]]
+  [[ "$output" == *"gcc"* ]]
+  [[ "$output" == *"total reclaimable"* ]]
+  # Nothing actually removed; no apt invocation; no state recorded.
+  pkg_installed gcc
+  pkg_installed gdb
+  [ ! -e "$ONIONARMOR_PM_STATE_DIR/removed.list" ]
+  [ ! -s "$PM_APT_LOG" ]
 }
 
-@test "apply: unknown option is rejected" {
-  run bash "$APPLY" --bogus
+@test "apply: confirm-no aborts cleanly without removing" {
+  set_role relay-guard
+  seed_pkg gcc 5000
+  # No --yes, and auto-confirm says NO.
+  ONIONARMOR_AUTO_CONFIRM=no run bash "$APPLY"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"unknown option"* ]]
+  [[ "$output" == *"cancelled"* ]]
+  pkg_installed gcc
+  [ ! -e "$ONIONARMOR_PM_STATE_DIR/removed.list" ]
+  ! grep -q 'remove -y' "$PM_APT_LOG"
+}
+
+@test "apply: nothing installed => clean nothing-to-remove exit 0" {
+  set_role relay-guard
+  # Fake DB is empty.
+  run bash "$APPLY" --yes
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"nothing to remove"* ]]
+  [ ! -e "$ONIONARMOR_PM_STATE_DIR/removed.list" ]
+}
+
+@test "apply: idempotent — second run finds nothing to remove" {
+  set_role relay-guard
+  seed_pkg gcc 5000
+  seed_pkg make 1200
+  bash "$APPLY" --yes >/dev/null
+  run bash "$APPLY" --yes
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"nothing to remove"* ]]
+}
+
+@test "apply: ONIONARMOR_SKIP_RELOAD records the set but does not invoke apt" {
+  set_role relay-guard
+  seed_pkg gcc 5000
+  ONIONARMOR_SKIP_RELOAD=yes run bash "$APPLY" --yes
+  [ "$status" -eq 0 ]
+  # apt never ran, so the package is still "installed" in the fake DB...
+  pkg_installed gcc
+  # ...but the planned removal set was recorded.
+  [[ "$(removed_list)" == *"gcc"* ]]
+  [ ! -s "$PM_APT_LOG" ]
+}
+
+@test "apply: writes audit-log entries" {
+  set_role relay-guard
+  seed_pkg gcc 5000
+  run bash "$APPLY" --yes
+  [ "$status" -eq 0 ]
+  grep -q 'pm.apply.start' "$ONIONARMOR_AUDIT_LOG"
+  grep -q 'pm.apply.remove' "$ONIONARMOR_AUDIT_LOG"
+  grep -q 'pm.apply.done' "$ONIONARMOR_AUDIT_LOG"
+}
+
+@test "apply: a skip on build-host writes a pm.apply.skip audit entry" {
+  set_role build-host
+  seed_pkg gcc 5000
+  run bash "$APPLY" --yes
+  [ "$status" -eq 0 ]
+  grep -q 'pm.apply.skip' "$ONIONARMOR_AUDIT_LOG"
 }

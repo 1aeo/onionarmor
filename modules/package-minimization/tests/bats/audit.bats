@@ -1,5 +1,6 @@
 #!/usr/bin/env bats
-# package-minimization audit.sh — green/yellow/red status, build-host skip.
+# package-minimization audit.sh — read-only advisory checks: yellow when target
+# packages are present, all-green when absent, build-host/ci reported as retained.
 
 load test_helper
 
@@ -8,50 +9,65 @@ load test_helper
   [ "$status" -eq 0 ]
 }
 
-@test "audit: GREEN when no removable packages are installed" {
-  install_pkg vim 3000   # not in the removable set
+@test "audit: yellow advisory when target packages are present" {
+  set_role relay-guard
+  seed_pkg gcc 5000
+  seed_pkg gdb 8000
   run bash "$AUDIT"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"none installed"* ]]
-  [[ "$output" == *"all green"* ]]
-}
-
-@test "audit: RED when a critical debug tool (gcc) is present" {
-  install_pkg gcc 5000
-  run bash "$AUDIT"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"gcc"* ]]
-  [[ "$output" == *"INSTALLED"* ]]
-}
-
-@test "audit: RED for any of gcc/gdb/tcpdump/strace present" {
-  install_pkg strace 800
-  run bash "$AUDIT"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"strace"* ]]
-}
-
-@test "audit: YELLOW (not red) when only non-critical removables are present" {
-  install_pkg make 1500
-  install_pkg cmake 9000
-  run bash "$AUDIT"
-  [ "$status" -eq 0 ]          # yellow-only exits 0
-  [[ "$output" == *"make"* ]]
-  [[ "$output" == *"removable build/debug tool"* ]]
-  [[ "$output" != *"all green"* ]]
-}
-
-@test "audit: reports the reclaimable size when packages are present" {
-  install_pkg make 2048
-  run bash "$AUDIT"
+  [ "$status" -eq 0 ]   # advisory yellows only — never red
+  [[ "$output" == *"[warn]"* ]]
+  [[ "$output" == *"removable: gcc"* ]]
+  [[ "$output" == *"removable: gdb"* ]]
   [[ "$output" == *"reclaimable"* ]]
+  [[ "$output" == *"green/yellow"* ]]
+  ! [[ "$output" == *"[FAIL]"* ]]
 }
 
-@test "audit: build-host role -> YELLOW 'skipped', never red" {
-  set_role build-host
-  install_pkg gcc 5000    # would be RED on any other role
+@test "audit: all-green when no target packages are installed" {
+  set_role relay-mid
+  # Fake DB empty.
   run bash "$AUDIT"
   [ "$status" -eq 0 ]
+  [[ "$output" == *"absent"* ]]
+  [[ "$output" == *"no target build/debug packages installed"* ]]
+  [[ "$output" == *"all green"* ]]
+  ! [[ "$output" == *"[warn]"* ]]
+  ! [[ "$output" == *"[FAIL]"* ]]
+}
+
+@test "audit: role=ci reported as toolchain retained (green)" {
+  set_role ci
+  seed_pkg gcc 5000   # present, but retained by design on a ci host
+  run bash "$AUDIT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"toolchain retained"* ]]
+  [[ "$output" == *"ci"* ]]
+  [[ "$output" == *"all green"* ]]
+  ! [[ "$output" == *"[FAIL]"* ]]
+}
+
+@test "audit: role=build-host reported as toolchain retained (green)" {
+  set_role build-host
+  seed_pkg gcc 5000
+  run bash "$AUDIT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"toolchain retained"* ]]
   [[ "$output" == *"build-host"* ]]
-  [[ "$output" == *"skipped"* ]]
+}
+
+@test "audit: reports the detected role on a relay" {
+  set_role relay-exit
+  run bash "$AUDIT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"role=relay-exit"* ]]
+}
+
+@test "audit: never mutates host state (fake DB unchanged)" {
+  set_role relay-guard
+  seed_pkg gcc 5000
+  before=$(cat "$PM_DB")
+  run bash "$AUDIT"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$PM_DB")" = "$before" ]
+  [ ! -s "$PM_APT_LOG" ]
 }

@@ -1,14 +1,10 @@
 # Test helper for the package-minimization module bats suite.
 #
-# Builds a throwaway sandbox with:
-#   - a stub `dpkg-query` that reports a controllable installed set + installed
-#     sizes (KiB) through env vars (PKG_INSTALLED, PKG_SIZE_<pkg>),
-#   - a stub `apt-get` that records its purge/install args to a log instead of
-#     touching the host,
-#   - a sandboxed ONIONARMOR_ETC_DIR holding role.conf,
-#   - a sandboxed state dir + audit log.
-# Fully offline; never runs real apt/dpkg. mktemp -d (not $BATS_TEST_TMPDIR) for
-# ubuntu-22.04's older bats.
+# Builds a throwaway sandbox: stub `dpkg-query` and `apt-get` that read/write a
+# fake installed-package DB file (lines of "pkg<TAB>sizeKiB"), plus a sandbox
+# role.conf. Fully offline; never touches the real host (no real apt/dpkg). We
+# use mktemp -d (not $BATS_TEST_TMPDIR) for compatibility with the older bats
+# packaged on ubuntu-22.04.
 
 setup() {
   MOD_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
@@ -29,56 +25,68 @@ setup() {
   mkdir -p "$STUB"
 
   # --- sandbox paths the module manages ---
-  export ONIONARMOR_ETC_DIR="$SB/etc/onionarmor"
-  export ONIONARMOR_PKG_STATE_DIR="$SB/var/lib/onionarmor/package-minimization"
+  export ONIONARMOR_PM_STATE_DIR="$SB/var/lib/onionarmor/package-minimization"
+  export ONIONARMOR_PM_ROLE_FILE="$SB/etc/onionarmor/role.conf"
   export ONIONARMOR_AUDIT_LOG="$SB/var/log/onionarmor/audit.log"
   export ONIONARMOR_OPERATOR="bats-test"
-  mkdir -p "$ONIONARMOR_ETC_DIR"
+  # Tests run non-interactively: auto-confirm yes unless a test overrides it.
+  export ONIONARMOR_AUTO_CONFIRM=yes
 
-  # Never block on an interactive confirm prompt; tests opt in explicitly.
-  export ONIONARMOR_AUTO_CONFIRM="no"
+  # Shrink the target set to a handful of packages the stub DB can model.
+  export ONIONARMOR_PM_PACKAGES="gcc make gdb tcpdump strace"
 
-  # The fake "installed" set + per-package sizes (KiB) the dpkg stub reports.
-  # Tests mutate these before invoking the module.
-  export PKG_INSTALLED=""
-  export PKG_DB="$SB/dpkg-db"
-  : > "$PKG_DB"
+  mkdir -p "$(dirname "$ONIONARMOR_PM_ROLE_FILE")"
+
+  # Fake installed-package DB: one "pkg<TAB>sizeKiB" line per installed package.
+  export PM_DB="$SB/dpkg-db"
+  : > "$PM_DB"
+  # Default size apt assigns to a freshly (re)installed package.
+  export PM_DEFAULT_INSTALL_SIZE=2048
 
   _build_stubs
-  export ONIONARMOR_PKG_DPKG_QUERY="$STUB/dpkg-query"
-  export ONIONARMOR_PKG_APT="$STUB/apt-get"
-  export STUB_APT_LOG="$SB/apt.log"
-  : > "$STUB_APT_LOG"
+  export ONIONARMOR_PM_DPKG_QUERY="$STUB/dpkg-query"
+  export ONIONARMOR_PM_APT="$STUB/apt-get"
+
+  # Log of apt invocations, for assertions.
+  export PM_APT_LOG="$SB/apt.log"
+  : > "$PM_APT_LOG"
 }
 
 teardown() {
   if [ -n "${SB:-}" ] && [ -d "$SB" ]; then rm -rf "$SB"; fi
 }
 
-# install_pkg <pkg> [size-kib] : mark a package installed in the fake dpkg db.
-install_pkg() {
-  local p=$1 sz=${2:-100}
-  printf '%s %s\n' "$p" "$sz" >> "$PKG_DB"
+# seed_pkg <name> <sizeKiB> : mark a package installed in the fake DB.
+seed_pkg() {
+  local name="$1" size="$2"
+  # Remove any existing entry first, then append.
+  if [ -f "$PM_DB" ]; then
+    grep -v "^$name	" "$PM_DB" > "$PM_DB.tmp" 2>/dev/null || true
+    mv "$PM_DB.tmp" "$PM_DB"
+  fi
+  printf '%s\t%s\n' "$name" "$size" >> "$PM_DB"
 }
 
-# set_role <role> : write /etc/onionarmor/role.conf in the sandbox.
+# set_role <role> : write a role=<role> line into the sandbox role.conf.
 set_role() {
-  printf 'role=%s\n' "$1" > "$ONIONARMOR_ETC_DIR/role.conf"
+  printf 'role=%s\n' "$1" > "$ONIONARMOR_PM_ROLE_FILE"
 }
 
-# apt_purged <pkg> : true iff the apt stub recorded a purge of <pkg>.
-apt_purged() {
-  grep -q "purge .*\b$1\b" "$STUB_APT_LOG"
+# pkg_installed <name> : succeed iff the package is present in the fake DB.
+pkg_installed() {
+  grep -q "^$1	" "$PM_DB" 2>/dev/null
 }
 
 _build_stubs() {
-  # dpkg-query stub: emulates the two queries the module uses against PKG_DB,
-  # a flat "name size" file. Unknown packages exit non-zero (not installed).
+  # dpkg-query stub: read the fake DB.
+  #   dpkg-query -W -f '${Status}' pkg         -> "install ok installed" iff present
+  #   dpkg-query -W -f '${Installed-Size}' pkg -> the size (KiB) iff present
+  # Exits nonzero (like the real tool) for an unknown package.
   cat > "$STUB/dpkg-query" <<'EOF'
 #!/bin/sh
-DB="${PKG_DB:?}"
-# Parse: dpkg-query -W -f '<fmt>' <pkg>
-fmt=""; pkg=""
+DB="${PM_DB:?}"
+fmt=""
+pkg=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -W) shift ;;
@@ -87,38 +95,50 @@ while [ $# -gt 0 ]; do
     *) pkg=$1; shift ;;
   esac
 done
-line=$(grep "^$pkg " "$DB" 2>/dev/null | tail -1)
+line=$(grep "^$pkg	" "$DB" 2>/dev/null | head -1)
 if [ -z "$line" ]; then
-  # Mimic dpkg-query: error to stderr, non-zero, no stdout.
+  # Unknown package: dpkg-query prints an error to stderr and exits nonzero.
   echo "dpkg-query: no packages found matching $pkg" >&2
   exit 1
 fi
-size=$(printf '%s' "$line" | awk '{print $2}')
+size=$(printf '%s' "$line" | cut -f2)
 case "$fmt" in
-  *Status-Status*) printf 'installed' ;;
-  *Installed-Size*) printf '%s' "$size" ;;
-  *) printf '%s' "$size" ;;
+  *'${Status}'*)         printf 'install ok installed' ;;
+  *'${Installed-Size}'*) printf '%s' "$size" ;;
+  *)                     printf '%s' "$size" ;;
 esac
 exit 0
 EOF
 
-  # apt-get stub: log the invocation; on `purge`, also remove the named packages
-  # from the fake dpkg db so a follow-up query reports them gone (idempotency).
+  # apt-get stub: mutate the fake DB.
+  #   apt-get remove -y  pkg...  -> delete those entries
+  #   apt-get install -y pkg...  -> add those entries (default install size)
   cat > "$STUB/apt-get" <<'EOF'
 #!/bin/sh
-LOG="${STUB_APT_LOG:-/dev/null}"
-DB="${PKG_DB:-/dev/null}"
+DB="${PM_DB:?}"
+LOG="${PM_APT_LOG:-/dev/null}"
+DEF="${PM_DEFAULT_INSTALL_SIZE:-1024}"
 printf '%s\n' "$*" >> "$LOG"
-if [ "$1" = "purge" ]; then
-  shift
-  for a in "$@"; do
-    case "$a" in -*) continue ;; esac
-    tmp="$DB.tmp.$$"
-    grep -v "^$a " "$DB" 2>/dev/null > "$tmp" || :
-    mv "$tmp" "$DB"
-  done
-fi
-exit "${STUB_APT_RC:-0}"
+op=$1; shift
+# drop a leading -y if present
+[ "$1" = "-y" ] && shift
+case "$op" in
+  remove)
+    for p in "$@"; do
+      grep -v "^$p	" "$DB" > "$DB.tmp" 2>/dev/null || true
+      mv "$DB.tmp" "$DB"
+    done
+    ;;
+  install)
+    for p in "$@"; do
+      grep -v "^$p	" "$DB" > "$DB.tmp" 2>/dev/null || true
+      mv "$DB.tmp" "$DB"
+      printf '%s\t%s\n' "$p" "$DEF" >> "$DB"
+    done
+    ;;
+esac
+exit 0
 EOF
+
   chmod +x "$STUB"/*
 }

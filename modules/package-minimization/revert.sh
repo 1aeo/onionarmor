@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
-# revert.sh — "undo" the package-minimization posture. You CANNOT un-purge a
-# package: the bits are gone. The honest best-effort revert is to print the exact
-# `apt-get install <list>` the operator can run to reinstall whatever this module
-# removed, reading that list from the module's state dir (written at apply time).
-#
-# This script makes NO host changes by itself — it prints the reinstall command
-# and explains that removal is not auto-reversible.
+# revert.sh — reinstall the build/debug toolchain that apply removed, restoring
+# the prior state. Reads the recorded set from removed.list and reinstalls it via
+# apt. Best-effort; clears the list on success. An empty/missing list is a clean
+# no-op.
 
 set -euo pipefail
 
@@ -13,52 +10,72 @@ _here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib.sh
 . "$_here/lib.sh"
 
-pkg_parse_flags "$@"
+pm_parse_flags "$@"
 
-state=$(pkg_state_file)
-
-audit_log pkg.revert.start "state=$state"
+removed_path=$(pm_removed_path)
+audit_log pm.revert.start "list=$removed_path"
 
 # ---------------------------------------------------------------------------
-# No record of a removal -> nothing to reinstall.
+# Nothing recorded => nothing to reinstall.
 # ---------------------------------------------------------------------------
-if [ ! -s "$state" ]; then
-  audit_log pkg.revert.done "removed=0"
-  cat <<EOF
-
-[package-minimization] revert.
-  No removal on record ($state is absent/empty) — nothing to reinstall.
-
-If you removed packages by hand, reinstall them with:
-  sudo $ONIONARMOR_PKG_APT install -y <package> ...
-EOF
+if [ ! -f "$removed_path" ]; then
+  info "package-minimization: no removed.list at $removed_path — nothing to reinstall"
+  audit_log pm.revert.done "reinstalled=0 reason=no-state"
+  printf '\n[package-minimization] reverted: nothing to do (no recorded removals).\n'
   exit 0
 fi
 
-removed=$(grep . "$state" | sort -u)
-removed_count=$(printf '%s\n' "$removed" | grep -c . || true)
-install_cmd="$ONIONARMOR_PKG_APT install -y $(printf '%s\n' "$removed" | tr '\n' ' ')"
-# Collapse any double spaces the trailing newline-to-space conversion introduced.
-install_cmd=$(printf '%s' "$install_cmd" | tr -s ' ')
+pkgs=$(tr '\n' ' ' < "$removed_path" | tr -s ' ' | sed 's/^ *//;s/ *$//')
+if [ -z "$pkgs" ]; then
+  info "package-minimization: removed.list is empty — nothing to reinstall"
+  rm -f "$removed_path" 2>/dev/null || true
+  audit_log pm.revert.done "reinstalled=0 reason=empty-list"
+  printf '\n[package-minimization] reverted: nothing to do (empty removed.list).\n'
+  exit 0
+fi
 
-audit_log pkg.revert.done "removed=$removed_count state=$state"
+# ---------------------------------------------------------------------------
+# Reinstall via a single apt-get call. Honour ONIONARMOR_SKIP_RELOAD=yes to mean
+# "do not actually invoke apt" (symmetric with apply).
+# ---------------------------------------------------------------------------
+reinstall_ok=0
+if [ "${ONIONARMOR_SKIP_RELOAD:-}" = "yes" ]; then
+  info "ONIONARMOR_SKIP_RELOAD=yes: not invoking apt — would reinstall: $pkgs"
+  reinstall_ok=1
+else
+  # shellcheck disable=SC2086  # $pkgs is a deliberate multi-package arg list
+  if "$ONIONARMOR_PM_APT" install -y $pkgs; then
+    reinstall_ok=1
+    audit_log pm.revert.install "packages=$pkgs"
+    info "reinstalled: $pkgs"
+  else
+    warn "apt-get install returned nonzero reinstalling: $pkgs — keeping removed.list for retry"
+    audit_log pm.revert.fail "stage=install packages=$pkgs"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Clear the recorded set on success so a re-run is a clean no-op.
+# ---------------------------------------------------------------------------
+if [ "$reinstall_ok" -eq 1 ]; then
+  if [ "${ONIONARMOR_SKIP_RELOAD:-}" = "yes" ]; then
+    info "removed.list kept (SKIP_RELOAD: no apt run, nothing actually reinstalled): $removed_path"
+  else
+    rm -f "$removed_path" 2>/dev/null \
+      && audit_log pm.revert.clear "removed=$removed_path" \
+      || warn "could not remove $removed_path"
+  fi
+fi
+
+revert_failed=0
+[ "$reinstall_ok" -eq 1 ] || revert_failed=1
+audit_log pm.revert.done "ok=$([ "$revert_failed" -eq 0 ] && echo 1 || echo 0) packages=$pkgs"
 
 cat <<EOF
 
-[package-minimization] revert (best-effort — removal is NOT auto-reversible).
-
-This module purged the following $removed_count package(s) (recorded at apply
-time in $state):
-
-$(printf '%s\n' "$removed" | sed 's/^/  - /')
-
-A purge deletes the package and its config; it cannot be auto-reversed. To
-reinstall the exact set above, run:
-
-  sudo $install_cmd
-
-After reinstalling, you may also want to clear the removal record so a future
-audit/revert no longer treats these as previously-removed:
-
-  rm -f $state
+[package-minimization] reverted.
+  reinstall : $([ "$reinstall_ok" -eq 1 ] && echo "$pkgs" || echo "FAILED — removed.list kept for retry")
+  list      : $([ "$reinstall_ok" -eq 1 ] && [ "${ONIONARMOR_SKIP_RELOAD:-}" != "yes" ] && echo "cleared ($removed_path)" || echo "kept ($removed_path)")
 EOF
+
+[ "$revert_failed" -eq 0 ] || { warn "revert did not reinstall every package — re-run revert"; exit 1; }

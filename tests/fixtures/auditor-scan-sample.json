@@ -1,0 +1,28 @@
+{
+  "host": "relay-host.example",
+  "profile": "relay-mid",
+  "generated": "2026-06-10T00:00:00Z",
+  "aggregate": 71,
+  "grade": "C",
+  "categories": {
+    "ssh-hardness": { "score": 40 },
+    "firewall": { "score": 50 },
+    "accounts": { "score": 55 },
+    "kernel-sysctl": { "score": 60 },
+    "package-hygiene": { "score": 80 },
+    "tor-config": { "score": 65 },
+    "service-inventory": { "score": 70 }
+  },
+  "findings": [
+    { "id": "ssh-hardness:permit-root-login", "category": "ssh-hardness", "name": "permit-root-login", "severity": "crit", "status": "fail", "detail": "PermitRootLogin is not no", "remediation": "set PermitRootLogin no", "weight": 2 },
+    { "id": "ssh-hardness:password-auth", "category": "ssh-hardness", "name": "password-auth", "severity": "crit", "status": "fail", "detail": "PasswordAuthentication enabled", "remediation": "set PasswordAuthentication no", "weight": 2 },
+    { "id": "firewall:default-deny", "category": "firewall", "name": "default-deny", "severity": "crit", "status": "fail", "detail": "no default-deny inbound", "remediation": "enable a default-deny firewall", "weight": 2 },
+    { "id": "accounts:cloudinit-sudo", "category": "accounts", "name": "cloudinit-sudo", "severity": "warn", "status": "fail", "detail": "cloud-init user holds sudo", "remediation": "lock + de-sudo cloud-init accounts", "weight": 1 },
+    { "id": "kernel-sysctl:kptr-restrict", "category": "kernel-sysctl", "name": "kptr-restrict", "severity": "warn", "status": "fail", "detail": "kernel.kptr_restrict != 2", "remediation": "set kernel.kptr_restrict=2", "weight": 1 },
+    { "id": "package-hygiene:build-toolchain", "category": "package-hygiene", "name": "build-toolchain", "severity": "info", "status": "warn", "detail": "gcc/make present on a relay", "remediation": "remove build toolchain", "weight": 1 },
+    { "id": "tor-config:dirreq-stats", "category": "tor-config", "name": "dirreq-stats", "severity": "info", "status": "fail", "detail": "DirReqStatistics not disabled", "remediation": "set DirReqStatistics 0", "weight": 1 },
+    { "id": "service-inventory:unexpected-listener", "category": "service-inventory", "name": "unexpected-listener", "severity": "warn", "status": "fail", "detail": "unrecognised listener on tcp/8443", "remediation": "investigate the listener", "weight": 1 },
+    { "id": "ssh-hardness:ciphers", "category": "ssh-hardness", "name": "ciphers", "severity": "warn", "status": "pass", "detail": "modern ciphers already pinned", "remediation": "n/a", "weight": 1 },
+    { "id": "tor-data-dirs:perms", "category": "tor-data-dirs", "name": "perms", "severity": "info", "status": "skip", "detail": "needs sudo", "remediation": "run: sudo ...", "weight": 1 }
+  ]
+}

@@ -1,145 +1,122 @@
 #!/usr/bin/env bats
-# mac-profile-install apply.sh — distro detection, install + enforce per family,
-# idempotency, dry-run.
+# mac-profile-install apply.sh — distro detection, AppArmor enforce + grub
+# cmdline, idempotency, dry-run, the SELinux branch, and audit-log entries.
 
 load test_helper
+
+grub_cmdline() {
+  sed -n 's/^GRUB_CMDLINE_LINUX_DEFAULT=//p' "$ONIONARMOR_GRUB_FILE"
+}
 
 @test "apply: syntax check (bash -n)" {
   run bash -n "$APPLY"
   [ "$status" -eq 0 ]
 }
 
-@test "apply: Debian os-release -> AppArmor path installs packages + enforces tor" {
-  seed_os_release_debian
-  seed_apparmor_profile
-  run bash "$APPLY"
-  [ "$status" -eq 0 ]
-  grep -q 'apt-get install .*apparmor' "$INSTALL_LOG"
-  grep -q 'apparmor-profiles' "$INSTALL_LOG"
-  grep -q 'apparmor-utils' "$INSTALL_LOG"
-  grep -q "aa-enforce .*usr.bin.tor" "$ACTION_LOG"
-  [[ "$output" == *"applied."* ]]
-  [ "$(cat "$AA_TOR_STATE")" = "enforce" ]
-}
-
-@test "apply: Ubuntu os-release also resolves to the AppArmor path" {
-  seed_os_release_ubuntu
-  seed_apparmor_profile
-  run bash "$APPLY"
-  [ "$status" -eq 0 ]
-  grep -q 'apt-get install .*apparmor' "$INSTALL_LOG"
-  ! grep -q 'dnf install' "$INSTALL_LOG"
-}
-
-@test "apply: Debian with no tor profile installs packages but enforces nothing" {
-  seed_os_release_debian
-  # no profile seeded
-  run bash "$APPLY"
-  [ "$status" -eq 0 ]
-  grep -q 'apt-get install .*apparmor' "$INSTALL_LOG"
-  [ ! -s "$ACTION_LOG" ]
-  [[ "$output" == *"absent"* ]]
-}
-
-@test "apply: RHEL os-release -> SELinux path installs policycoreutils + enforcing + setenforce 1" {
-  seed_os_release_rhel
-  seed_selinux_config permissive
-  run bash "$APPLY"
-  [ "$status" -eq 0 ]
-  grep -q 'dnf install .*policycoreutils' "$INSTALL_LOG"
-  grep -q 'selinux-policy-targeted' "$INSTALL_LOG"
-  [ "$(config_selinux_mode)" = "enforcing" ]
-  grep -q 'setenforce 1' "$ACTION_LOG"
-  [ "$(cat "$SE_RUNMODE")" = "enforcing" ]
-}
-
-@test "apply: --distro debian forces the AppArmor path regardless of os-release" {
-  seed_os_release_rhel       # host LOOKS like RHEL ...
-  seed_apparmor_profile
-  run bash "$APPLY" --distro debian   # ... but we force debian
-  [ "$status" -eq 0 ]
-  grep -q 'apt-get install' "$INSTALL_LOG"
-  ! grep -q 'dnf install' "$INSTALL_LOG"
-}
-
-@test "apply: --distro rhel forces the SELinux path regardless of os-release" {
-  seed_os_release_debian
-  seed_selinux_config permissive
-  run bash "$APPLY" --distro rhel
-  [ "$status" -eq 0 ]
-  grep -q 'dnf install' "$INSTALL_LOG"
-  ! grep -q 'apt-get install' "$INSTALL_LOG"
-}
-
-@test "apply: undetectable distro with no --distro dies with guidance" {
+@test "apply: unknown distro fails clearly" {
   printf 'ID=plan9\n' > "$ONIONARMOR_MAC_OS_RELEASE"
   run bash "$APPLY"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"unsupported/undetected distro"* ]]
+  [[ "$output" == *"cannot determine distro family"* ]]
 }
 
-@test "apply --dry-run (debian): prints plan, installs nothing, enforces nothing" {
-  seed_os_release_debian
-  seed_apparmor_profile
+@test "apply (Debian): enforces the tor profile and sets the grub cmdline" {
+  set_debian
+  seed_tor_profile complain
+  run bash "$APPLY"
+  [ "$status" -eq 0 ]
+  # tor profile flipped to enforce by the aa-enforce stub.
+  [ "$(cat "$AA_PROFILE_STATE")" = "enforce" ]
+  # grub cmdline now carries both AppArmor tokens.
+  [[ "$(grub_cmdline)" == *"apparmor=1"* ]]
+  [[ "$(grub_cmdline)" == *"security=apparmor"* ]]
+  # original tokens preserved.
+  [[ "$(grub_cmdline)" == *"quiet splash"* ]]
+  [[ "$output" == *"REBOOT REQUIRED"* ]]
+  [[ "$output" == *"applied."* ]]
+}
+
+@test "apply (Debian): backs up the grub file before editing" {
+  set_debian
+  seed_tor_profile complain
+  run bash "$APPLY"
+  [ "$status" -eq 0 ]
+  backup="$ONIONARMOR_MAC_STATE_DIR/grub.backup"
+  [ -f "$backup" ]
+  [[ "$(cat "$backup")" == *"quiet splash"* ]]
+  ! [[ "$(cat "$backup")" == *"apparmor=1"* ]]
+}
+
+@test "apply (Debian): idempotent — second run makes no grub change" {
+  set_debian
+  seed_tor_profile complain
+  bash "$APPLY" >/dev/null
+  first="$(grub_cmdline)"
+  run bash "$APPLY"
+  [ "$status" -eq 0 ]
+  [ "$(grub_cmdline)" = "$first" ]
+  [[ "$output" == *"already has"* ]]
+  # No duplicate tokens.
+  [ "$(grub_cmdline | grep -o 'apparmor=1' | wc -l | tr -d ' ')" = "1" ]
+}
+
+@test "apply (Debian): no tor profile is informational, not a failure" {
+  set_debian
+  seed_tor_profile absent
+  run bash "$APPLY"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no tor AppArmor profile installed"* ]]
+}
+
+@test "apply --dry-run (Debian): changes nothing" {
+  set_debian
+  seed_tor_profile complain
+  before="$(cat "$ONIONARMOR_GRUB_FILE")"
   run bash "$APPLY" --dry-run
   [ "$status" -eq 0 ]
   [[ "$output" == *"dry-run: mac-profile-install"* ]]
-  [[ "$output" == *"AppArmor"* ]]
-  [ ! -s "$INSTALL_LOG" ]
-  [ ! -s "$ACTION_LOG" ]
+  [ "$(cat "$ONIONARMOR_GRUB_FILE")" = "$before" ]
+  # tor profile NOT flipped to enforce.
+  [ "$(cat "$AA_PROFILE_STATE")" = "complain" ]
+  [ ! -e "$ONIONARMOR_MAC_STATE_DIR/applied.state" ]
 }
 
-@test "apply --dry-run (rhel): prints plan, installs nothing, never setenforces" {
-  seed_os_release_rhel
-  seed_selinux_config disabled
-  run bash "$APPLY" --dry-run
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"SELinux"* ]]
-  [ ! -s "$INSTALL_LOG" ]
-  [ ! -s "$ACTION_LOG" ]
-  [ "$(config_selinux_mode)" = "disabled" ]   # config untouched
-}
-
-@test "apply (debian): idempotent — already enforcing says 'already applied'" {
-  seed_os_release_debian
-  seed_apparmor_profile
-  set_aa_tor_state enforce       # tor already enforcing
+@test "apply (RHEL): sets SELINUX=enforcing in the config" {
+  set_rhel
+  seed_selinux_mode permissive
   run bash "$APPLY"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"already applied"* ]]
-  [ ! -s "$INSTALL_LOG" ]         # no install attempted
+  grep -q '^SELINUX=enforcing' "$ONIONARMOR_MAC_SELINUX_CONFIG"
+  ! grep -q '^SELINUX=permissive' "$ONIONARMOR_MAC_SELINUX_CONFIG"
+  [[ "$output" == *"REBOOT REQUIRED"* ]]
 }
 
-@test "apply (rhel): idempotent — running+config enforcing says 'already applied'" {
-  seed_os_release_rhel
-  seed_selinux_config enforcing
-  set_se_runmode enforcing
+@test "apply (RHEL): idempotent — second run leaves enforcing set" {
+  set_rhel
+  seed_selinux_mode permissive
+  bash "$APPLY" >/dev/null
   run bash "$APPLY"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"already applied"* ]]
-  [ ! -s "$INSTALL_LOG" ]
+  [[ "$output" == *"already set to enforcing"* ]]
+  [ "$(grep -c '^SELINUX=' "$ONIONARMOR_MAC_SELINUX_CONFIG")" = "1" ]
 }
 
-@test "apply: writes audit-log entries (debian)" {
-  seed_os_release_debian
-  seed_apparmor_profile
+@test "apply: ONIONARMOR_SKIP_RELOAD does not invoke aa-enforce/apt" {
+  set_debian
+  seed_tor_profile complain
+  ONIONARMOR_SKIP_RELOAD=yes run bash "$APPLY"
+  [ "$status" -eq 0 ]
+  # tor profile left in complain (aa-enforce never ran).
+  [ "$(cat "$AA_PROFILE_STATE")" = "complain" ]
+}
+
+@test "apply (Debian): writes audit-log entries" {
+  set_debian
+  seed_tor_profile complain
   run bash "$APPLY"
   [ "$status" -eq 0 ]
   grep -q 'mac.apply.start' "$ONIONARMOR_AUDIT_LOG"
-  grep -q 'mac.apply.install' "$ONIONARMOR_AUDIT_LOG"
   grep -q 'mac.apply.enforce' "$ONIONARMOR_AUDIT_LOG"
+  grep -q 'mac.apply.grub' "$ONIONARMOR_AUDIT_LOG"
   grep -q 'mac.apply.done' "$ONIONARMOR_AUDIT_LOG"
-}
-
-@test "apply: unknown option is rejected" {
-  seed_os_release_debian
-  run bash "$APPLY" --bogus
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"unknown option"* ]]
-}
-
-@test "apply: --distro without a value is rejected" {
-  run bash "$APPLY" --distro
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"requires a value"* ]]
 }

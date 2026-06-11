@@ -1,5 +1,6 @@
 #!/usr/bin/env bats
-# kernel-hardening audit.sh — red before apply, green after, drift detection.
+# kernel-hardening audit.sh — yellow "not applied", all-green after apply,
+# red drift, and exit codes.
 
 load test_helper
 
@@ -8,35 +9,42 @@ load test_helper
   [ "$status" -eq 0 ]
 }
 
-@test "audit: RED when the drop-in is missing" {
+@test "audit: yellow 'not applied' + exit 0 when no drop-in is present" {
   run bash "$AUDIT"
-  [ "$status" -eq 1 ]
+  [ "$status" -eq 0 ]
   [[ "$output" == *"drop-in present"* ]]
-  [[ "$output" == *"missing"* ]]
+  [[ "$output" == *"not applied"* ]]
+  [[ "$output" == *"[warn]"* ]]
+  ! [[ "$output" == *"[FAIL]"* ]]
 }
 
-@test "audit: GREEN after apply (drop-in present + live values match)" {
+@test "audit: red/drift before apply once a drop-in exists but keys are unloaded" {
+  # Write the managed drop-in WITHOUT loading it (skip the reload). The stub
+  # returns the pre-hardening default (0) for unloaded keys -> drift.
+  ONIONARMOR_SKIP_RELOAD=yes bash "$APPLY" >/dev/null
+  run bash "$AUDIT"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"[FAIL]"* ]]
+  [[ "$output" == *"drift from the KSPP target"* ]]
+}
+
+@test "audit: all green after a clean apply" {
   bash "$APPLY" >/dev/null
   run bash "$AUDIT"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"matches KSPP posture"* ]]
+  [[ "$output" == *"drop-in present"* ]]
+  [[ "$output" == *"kernel.dmesg_restrict"* ]]
   [[ "$output" == *"all green"* ]]
+  ! [[ "$output" == *"[FAIL]"* ]]
 }
 
-@test "audit: RED when a live value drifts from target" {
+@test "audit: exits nonzero when a single key drifts" {
   bash "$APPLY" >/dev/null
-  # Operator (or a competing tool) flips a key back at runtime.
-  "$ONIONARMOR_SYSCTL_CMD" -w kernel.kptr_restrict=0 >/dev/null
+  # Knock one key out of the hardened value.
+  "$ONIONARMOR_SYSCTL_CMD" -w kernel.kptr_restrict=0
   run bash "$AUDIT"
   [ "$status" -eq 1 ]
   [[ "$output" == *"kernel.kptr_restrict"* ]]
-  [[ "$output" == *"!= target"* ]]
-}
-
-@test "audit: RED when the drop-in drifted from the rendered posture" {
-  bash "$APPLY" >/dev/null
-  printf '# tampered\n' >> "$DROPIN"
-  run bash "$AUDIT"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"DRIFTED"* ]]
+  [[ "$output" == *"[FAIL]"* ]]
+  [[ "$output" == *"target '2'"* ]]
 }

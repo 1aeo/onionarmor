@@ -1,13 +1,8 @@
 #!/usr/bin/env bash
-# audit.sh — green/yellow/red status of the package-minimization posture.
-# Read-only; never changes host state. Exits non-zero if ANY check is red.
-#
-# Checks (read-only via the overridable dpkg-query):
-#   - On a build-host role: a single yellow "skipped" line (toolchains are
-#     expected there); audit never goes red.
-#   - Otherwise: list each removable package that is still installed. A
-#     "critical" debug tool still present (gcc/gdb/tcpdump/strace) -> RED; any
-#     other removable still present -> YELLOW. None present -> GREEN.
+# audit.sh — green/yellow status of the package-minimization posture. Read-only;
+# never changes host state. Findings are advisory: a present toolchain package is
+# a yellow ("removable"), not a red. On build-host / ci roles the toolchain is
+# retained by design, reported green/info.
 
 set -euo pipefail
 
@@ -15,44 +10,44 @@ _here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib.sh
 . "$_here/lib.sh"
 
-pkg_parse_flags "$@"
+pm_parse_flags "$@"
+
+role=$(pm_role)
+role_label=${role:-unset}
 
 info "package-minimization audit"
 printf '\n'
 
-# --- build-host role: report the intentional skip, never go red -----------
-skip=$(pkg_skip_role)
-if [ -n "$skip" ]; then
-  oa_status_check yellow "role skip" "host role is '$skip' — package removal skipped (build host needs toolchains)"
-  oa_status_summary "n/a"
+# ---------------------------------------------------------------------------
+# build-host / ci legitimately retain a toolchain — report and stop (green).
+# ---------------------------------------------------------------------------
+if pm_role_is_skip "$role"; then
+  oa_status_check green "toolchain retained" "role=$role_label legitimately needs a toolchain (module skipped)"
+  oa_status_summary "package-minimization posture broken"
 fi
 
-present=$(pkg_present_list)
-present_count=$(printf '%s\n' "$present" | grep -c . || true)
+oa_status_check green "host role" "role=$role_label (toolchain is removable on a relay)"
 
-# --- per-package presence -------------------------------------------------
-# NB: read from a here-doc, NOT a pipe — `oa_status_check` mutates the shared
-# `_oa_status_worst` accumulator, which a pipeline subshell would discard.
-if [ "$present_count" -eq 0 ]; then
-  oa_status_check green "removable packages" "none installed — host is minimal"
+# ---------------------------------------------------------------------------
+# Per-target package: green if absent, yellow advisory if present.
+# ---------------------------------------------------------------------------
+total_kib=0
+present=0
+for pkg in $ONIONARMOR_PM_PACKAGES; do
+  if pm_pkg_installed "$pkg"; then
+    sz=$(pm_pkg_size "$pkg")
+    total_kib=$((total_kib + sz))
+    present=$((present + 1))
+    oa_status_check yellow "package: $pkg" "removable: $pkg ($(pm_human_kib "$sz"))"
+  else
+    oa_status_check green "package: $pkg" "absent"
+  fi
+done
+
+if [ "$present" -gt 0 ]; then
+  oa_status_check yellow "reclaimable" "$present package(s) removable, total $(pm_human_kib "$total_kib") — apply to remove"
 else
-  while read -r p; do
-    [ -n "$p" ] || continue
-    sz=$(pkg_human_kib "$(pkg_installed_size_kib "$p")")
-    if pkg_is_crit "$p"; then
-      oa_status_check red "$p" "INSTALLED ($sz) — critical post-exploitation tool, purge it"
-    else
-      oa_status_check yellow "$p" "installed ($sz) — removable build/debug tool"
-    fi
-  done <<EOF
-$present
-EOF
+  oa_status_check green "reclaimable" "no target build/debug packages installed"
 fi
 
-# --- reclaimable total (informational) ------------------------------------
-if [ "$present_count" -gt 0 ]; then
-  reclaim_kib=$(printf '%s\n' "$present" | pkg_reclaim_kib)
-  info "reclaimable: $(pkg_human_kib "$reclaim_kib") across $present_count package(s) — run: onionarmor apply --module package-minimization --confirm"
-fi
-
-oa_status_summary "one or more critical post-exploitation tools are still installed — purge them"
+oa_status_summary "package-minimization posture broken"

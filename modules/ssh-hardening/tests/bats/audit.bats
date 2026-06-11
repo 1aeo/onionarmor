@@ -1,6 +1,5 @@
 #!/usr/bin/env bats
-# ssh-hardening audit.sh — RED before apply / GREEN after / yellow when a latch
-# is pending or host keys are weak. Read-only.
+# ssh-hardening audit.sh — read-only green/yellow/red status + exit codes.
 
 load test_helper
 
@@ -9,56 +8,40 @@ load test_helper
   [ "$status" -eq 0 ]
 }
 
-@test "audit: RED before apply (drop-in missing) exits nonzero" {
+@test "audit: not-applied is yellow and exits 0" {
   run bash "$AUDIT"
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"missing"* ]]
-  [[ "$output" == *"[FAIL]"* ]]
-}
-
-@test "audit: GREEN after apply once the latch is cancelled" {
-  # A >=4096-bit RSA host key present so the RSA check is green too (not yellow).
-  seed_hostkey ssh_host_rsa_key
-  SSHD_RSA_BITS=4096 bash "$APPLY" >/dev/null
-  bash "$APPLY" --cancel-safety-latch >/dev/null
-  SSHD_RSA_BITS=4096 run bash "$AUDIT"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"all green"* ]]
+  [[ "$output" == *"not applied yet"* ]]
 }
 
-@test "audit: yellow (still exits 0) while an auto-revert latch is pending" {
+@test "audit: a clean apply is all green and exits 0" {
+  seed_login operator
+  bash "$APPLY" >/dev/null
+  # Cancel the pending latch so the latch check is green, not yellow.
+  job=$(cat "$ONIONARMOR_SSH_STATE_DIR/safety-latch.job")
+  "$STUB/atrm" "$job"
+  run bash "$AUDIT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"PermitRootLogin"* ]]
+  [[ "$output" == *"sshd -t"* ]]
+  [[ "$output" == *"audit: all green"* ]]
+}
+
+@test "audit: a drifted directive is red and exits non-zero" {
+  seed_login operator
+  bash "$APPLY" >/dev/null
+  # Weaken the posture out from under us.
+  sed -i.orig 's/^PermitRootLogin no$/PermitRootLogin yes/' "$DROPIN"
+  run bash "$AUDIT"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"drifted"* ]]
+}
+
+@test "audit: a pending safety latch is reported yellow" {
+  seed_login operator
   bash "$APPLY" >/dev/null
   run bash "$AUDIT"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"auto-revert pending"* ]]
-}
-
-@test "audit: RED if a DSA/ECDSA host key is present" {
-  bash "$APPLY" >/dev/null
-  bash "$APPLY" --cancel-safety-latch >/dev/null
-  seed_hostkey ssh_host_ecdsa_key
-  run bash "$AUDIT"
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"weak host keys absent"* ]]
-}
-
-@test "audit: RED if the RSA host key is under 4096 bits" {
-  bash "$APPLY" --no-safety-latch >/dev/null
-  seed_hostkey ssh_host_rsa_key
-  SSHD_RSA_BITS=2048 run bash "$AUDIT"
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"RSA host key strength"* ]]
-}
-
-@test "audit: yellow when RSA strength cannot be determined" {
-  bash "$APPLY" --no-safety-latch >/dev/null
-  seed_hostkey ssh_host_rsa_key
-  SSHD_RSA_BITS=unknown run bash "$AUDIT"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"could not determine"* ]]
-}
-
-@test "audit: read-only — does not create or remove the drop-in" {
-  run bash "$AUDIT"
-  [ ! -e "$DROPIN" ]
+  [[ "$output" == *"safety latch"* ]]
+  [[ "$output" == *"PENDING"* ]]
 }

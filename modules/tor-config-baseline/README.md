@@ -1,142 +1,128 @@
-# tor-config-baseline
+# Module: `tor-config-baseline`
 
-**Enforce a conservative config baseline on every tor instance's `torrc`:
-offline master key, a short signing-key lifetime, loopback-only Metrics/Control
-ports, cookie auth for an unauthenticated control port, and disabled relay
-statistics — editing each `torrc` in place (with a backup) and reloading the
-instance.**
+**Apply a baseline of safe torrc directives — statistics off, signing-key lifetime pinned, loopback-only Metrics/ControlPort — inside a clearly-delimited managed block on every tor instance, without ever touching operator-domain directives.**
 
-It maps to the onionauditor **`tor-config`** category. Discovery mirrors
-`kernel-reserved-ports`: every `*/torrc` under `$ONIONARMOR_TCB_INSTANCES_DIR`
-(default `/etc/tor/instances`) plus a single `$ONIONARMOR_TCB_TORRC` (default
-`/etc/tor/torrc`).
+`tor-config-baseline` appends a single bracketed **managed block** to each
+instance's `torrc` and keeps it in sync. Everything it sets lives between two
+literal markers:
 
-## Risk
+```text
+# >>> onionarmor tor-config-baseline (managed) >>>
+SigningKeyLifetime 60 days
+DirReqStatistics 0
+ConnDirectionStatistics 0
+ExtraInfoStatistics 0
+MetricsPort 127.0.0.1:auto
+ControlPort 127.0.0.1:auto
+CookieAuthentication 1
+CookieAuthFile /var/run/tor/control.authcookie
+# <<< onionarmor tor-config-baseline (managed) <<<
+```
 
-**Medium — recommended-OFF by default.** This module mutates `torrc` and reloads
-tor, and it sets `OfflineMasterKey 1`, which has real operational consequences:
-the relay's signing key must be rotated and the ed25519 **master identity key
-taken offline**. A bad edit can also lock you out of the control port or fail the
-reload. Two protections apply:
+It **never** edits anything outside that block, so an operator's hand-tuned
+directives are left exactly as written. Apply backs up the original `torrc` once,
+strips any stale managed block, then re-appends the freshly rendered one; if the
+result is byte-identical it reports *already current* and does not reload.
 
-1. **A `--confirm-offline-master-key` gate** — apply refuses to mutate without it
-   (outside `--dry-run`).
-2. **A 5-minute auto-revert safety latch** (shared `lib/safety_latch.sh`) — armed
-   *before* any edit, so a broken `torrc` is automatically rolled back unless you
-   confirm health and cancel it in time.
+> **Risk: medium.** Opt-in / default-off — run it explicitly. It reloads tor, and
+> with `--confirm-offline-master-key` it changes signing-key behaviour (it assumes
+> you have generated an offline master key), which is why that directive is gated
+> behind an explicit flag.
 
 ## Quick start
 
 ```sh
-# Preview every per-instance change first (no host changes):
+# ALWAYS dry-run first — see the rendered block + added-vs-preserved per instance:
 sudo onionarmor apply --module tor-config-baseline --dry-run
 
-# Apply (REQUIRES the confirm flag; arms the auto-revert latch):
-sudo onionarmor apply --module tor-config-baseline --confirm-offline-master-key
+# Apply (edits each torrc's managed block, reloads each instance):
+sudo onionarmor apply --module tor-config-baseline
 
-# ... confirm tor is healthy, THEN cancel the latch within 5 minutes:
-sudo onionarmor apply --module tor-config-baseline --cancel-safety-latch
-
-# Check status (green/yellow/red; non-zero exit if any red):
+# Check status (green/yellow/red; advisory findings are yellow):
 onionarmor audit --module tor-config-baseline
 
-# Undo (restore each torrc from backup + reload):
+# Undo (strip the block / restore the pre-apply backup, reload):
 sudo onionarmor revert --module tor-config-baseline
 ```
+
+## Instances
+
+Per-instance trees are preferred: every `$ONIONARMOR_TCB_INSTANCES_DIR/<name>/torrc`
+(default `/etc/tor/instances/<name>/torrc`) is managed independently and reloaded
+with `systemctl reload tor@<name>`. When no instances directory exists, the module
+falls back to the single `$ONIONARMOR_TCB_TORRC` (default `/etc/tor/torrc`) and
+reloads the bare `tor` unit.
+
+## What the managed block sets
+
+| Directive | Behaviour |
+|---|---|
+| `SigningKeyLifetime 60 days` | pinned |
+| `DirReqStatistics 0` | always |
+| `ConnDirectionStatistics 0` | always |
+| `ExtraInfoStatistics 0` | always |
+| `MetricsPort 127.0.0.1:auto` | added **only** if the operator has no loopback MetricsPort. An existing loopback bind is preserved (none added); a **non-loopback** operator bind is left untouched and warned (a yellow finding) — we never move an operator's public bind. |
+| `ControlPort 127.0.0.1:auto` | same preserve-if-loopback logic as MetricsPort. |
+| `CookieAuthentication 1` + `CookieAuthFile …` | added only when a ControlPort is in effect (managed or pre-existing) **and** the torrc has neither `HashedControlPassword` nor `CookieAuthentication 1`. |
+| `OfflineMasterKey 1` | emitted **only** with `--confirm-offline-master-key`; otherwise omitted with a one-line note. |
+
+## Never touched (operator domain)
+
+`ContactInfo`, `MyFamily`, `FamilyId`, `ExitRelay`, `SocksPort`, `ORPort`,
+`DirPort`, `Nickname`, `Address` — these are left exactly as the operator wrote
+them and never appear in the managed block.
 
 ## Flags
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--dry-run` | off | Print, per instance, the plan of what would change. Changes nothing; exits 0. |
-| `--confirm-offline-master-key` | off | **Required to mutate.** Without it (and not in `--dry-run`), apply dies with an explanation of the `OfflineMasterKey` impact. |
-| `--no-safety-latch` | latch on | Skip the auto-revert latch (console access required — a broken edit will NOT be rolled back). |
-| `--cancel-safety-latch` | — | Cancel a pending auto-revert latch and exit. |
-| `--latch-minutes <N>` | 5 | Auto-revert delay in minutes. |
-| `-h`, `--help` | — | Module help. |
+| `--confirm-offline-master-key` | off | Also emit `OfflineMasterKey 1` (assumes an offline master key exists). |
+| `--dry-run` | off | Print the rendered block + added-vs-preserved per instance. Changes nothing; never reloads. |
+| `--verify` / `--no-verify` | verify | Post-apply: confirm the managed block is present and well-formed. |
+| `-h`, `--help` | — | Usage. |
 
-## Managed settings
+`ONIONARMOR_SKIP_RELOAD=yes` skips all reloads (symmetric in apply and revert).
 
-Enforced on every discovered `torrc` (added if missing, corrected if wrong):
+## What `audit` checks
 
-| Setting | Value | Why |
-|---|---|---|
-| `OfflineMasterKey` | `1` | Keep the ed25519 master identity key offline; only a short-lived signing key lives on the host. |
-| `SigningKeyLifetime` | `60 days` | Bound the blast radius of a stolen signing key. |
-| `MetricsPort` | `127.0.0.1:auto` | Bind metrics to loopback only — **preserves** any existing localhost MetricsPort. |
-| `ControlPort` | `127.0.0.1:auto` | Bind the control port to loopback only — **preserves** any existing localhost ControlPort. |
-| `CookieAuthentication` + `CookieAuthFile` | `1` / `/var/run/tor/control.authcookie` | Added **only** when a `ControlPort` is set with no `CookieAuthentication` and no `HashedControlPassword`. |
-| `DirReqStatistics` | `0` | Stop publishing directory-request statistics. |
-| `ConnDirectionStatistics` | `0` | Stop publishing connection-direction statistics. |
-| `ExtraInfoStatistics` | `0` | Stop publishing extra-info statistics. |
+Read-only; this module's findings are advisory, so missing directives and a
+non-loopback Metrics/ControlPort are **yellow**, not red. Per instance: one check
+per managed directive (green when set in the block or satisfied by a pre-existing
+loopback equivalent), the ControlPort auth posture, and `OfflineMasterKey`
+(yellow/info when absent, since it is opt-in).
 
-For `MetricsPort`/`ControlPort`, an existing binding to `127.x` / `::1` / a bare
-port / `auto` is treated as a localhost listener and left untouched; the
-`127.0.0.1:auto` line is added only when none is present.
+## Revert
 
-## What it does
+`revert` restores each instance's pre-apply backup byte-for-byte when present,
+else strips just the managed block, reloads each changed instance, and clears
+module state. Best-effort and idempotent.
 
-1. Discovers every instance `torrc` and a top-level `torrc`.
-2. `--dry-run` prints a per-instance `add`/`set` plan and exits — no changes.
-3. Otherwise, requires `--confirm-offline-master-key`, then **backs up every
-   `torrc`** to `$ONIONARMOR_TCB_STATE_DIR/backups/`, renders a restore script,
-   and **arms the auto-revert latch** (unless `--no-safety-latch`). If arming
-   fails, it dies *before* editing anything.
-4. Rewrites each `torrc` with `awk` to a temp file + `mv` (portable in-place
-   edit): enforced keys are corrected/appended; the special Metrics/Control/cookie
-   directives are appended only when absent. Idempotent — a re-apply with no
-   change rewrites nothing.
-5. Reloads each changed instance via `systemctl reload tor@<inst>`.
+## Files this module manages
 
-## Safety latch (auto-revert)
+| Path | Purpose |
+|---|---|
+| `<instances-dir>/<name>/torrc` (or the single `/etc/tor/torrc`) | the managed block appended at the end |
+| `/var/lib/onionarmor/tor-config-baseline/<instance>.torrc.bak` | the one-time pre-apply backup |
 
-Before editing, the module stages a restore script (`cp` each backup back +
-`systemctl reload tor@<inst>`) and schedules it via `at now + N min`. After
-applying it prints the cancel commands, e.g.:
-
-```text
-*** AUTO-REVERT SAFETY LATCH ACTIVE — torrc edits will be rolled back in 5 minutes. ***
-    atrm <jobid>
-    onionarmor apply --module tor-config-baseline --cancel-safety-latch
-```
-
-Confirm every instance is healthy (control port reachable, reload clean), then
-cancel within N minutes. If you do **not** cancel, each `torrc` is restored from
-backup and reloaded automatically. `audit` reports a pending latch as a yellow
-caution. `revert` cancels any pending latch first.
-
-## Preserved settings
-
-These operator lines are **never modified or removed** — they pass through the
-rewriter verbatim:
-
-`ContactInfo` · `MyFamily` · `FamilyId` · `ExitRelay` · `SocksPort`
-
-## Threat model
-
-Narrows what a compromised relay host exposes and what a stolen key buys an
-attacker: the master identity key is kept offline (`OfflineMasterKey`) and the
-on-host signing key is short-lived (`SigningKeyLifetime`), so key theft is
-time-bounded and the relay's long-term identity survives. Binding `MetricsPort`
-and `ControlPort` to loopback keeps them off the public internet, and cookie auth
-closes an **unauthenticated control port** — the single most dangerous tor
-misconfiguration (full relay control to anyone who can reach the port). Disabling
-`DirReq`/`ConnDirection`/`ExtraInfo` statistics reduces the relay's published
-metadata footprint. It does **not** manage the operator's identity, exit, or
-family policy (those are preserved), and it is not a substitute for host firewall
-(`firewall-default-deny`) or kernel hardening.
+Every path and external command is overridable via environment variables (see
+`lib.sh`) so the bats suite drives the whole module against a stub `systemctl`
+and sandbox torrc trees, never touching the real host or tor.
 
 ## Tests
 
-`tests/bats/` drives apply→audit→revert against a sandbox `/etc/tor/instances`
-tree with a stub `systemctl` (records each `reload tor@<inst>`) and `at`/`atrm`
-stubs — fully offline, never touches real tor. Coverage (36 tests): the
-`--confirm-offline-master-key` gate (refuse + no edits without it); enforced
-settings added/corrected; an existing localhost MetricsPort preserved (not
-duplicated); cookie auth added to an unauthenticated ControlPort but not to an
-authenticated one; `ContactInfo`/`MyFamily`/`FamilyId`/`ExitRelay`/`SocksPort`
-untouched; idempotency; per-instance reload; latch armed (jobid + staged
-`restore.sh` + printed cancel cmd); `--no-safety-latch`; `--cancel-safety-latch`;
-latch-arm-failure aborting before any edit; `--dry-run` changing nothing;
-multi-instance + top-level torrc; audit RED→GREEN with the latch caution; revert
-restore + round-trip; and audit-log lines.
+```sh
+bats modules/tor-config-baseline/tests/bats/
+```
+
+The offline suite stubs `systemctl` (logging every `reload` call) and seeds
+sandbox instance torrc trees, covering: block insertion with the stats/lifetime
+directives; loopback MetricsPort preserved (no duplicate); a non-loopback bind
+left untouched + warned; CookieAuth added when a ControlPort is in effect with no
+auth; `OfflineMasterKey` gated behind `--confirm-offline-master-key`; operator
+directives left untouched and outside the block; idempotency; per-instance
+reloads; `--dry-run`; `ONIONARMOR_SKIP_RELOAD=yes`; and the apply → audit →
+revert cycle restoring the torrc byte-for-byte.
+
+---
+
+**See also:** [Modules overview](../README.md) · [`kernel-reserved-ports`](../kernel-reserved-ports/README.md) · [main README](../../README.md)

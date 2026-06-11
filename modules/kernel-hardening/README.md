@@ -1,92 +1,87 @@
 # kernel-hardening
 
-**Write the KSPP (Kernel Self-Protection Project) recommended sysctls to one
-managed drop-in and load them — `dmesg`/`kptr`/`bpf`/`perf` restrictions, ASLR,
-ptrace scope, kexec lockdown, and the standard network anti-spoofing set.**
+Write and load a **KSPP-recommended** (Kernel Self-Protection Project) sysctl
+hardening drop-in. This is a **default-on, very-low-risk** module: pure security
+uplift, applied at runtime and fully reversible without a reboot. It is
+**recommended on by default** for every relay host — there is no confirmation
+gate.
 
-This is the only onionarmor module that is **recommended-on by default**: every
-setting here is very low risk and none of it changes the relay's externally
-observable behaviour. It maps to the onionauditor **`kernel-sysctl`** category.
-
-## Risk
-
-**Very low.** These are read-restriction and anti-spoofing knobs, not behaviour
-changes. No safety latch is needed (nothing here can lock you out or drop a tor
-listener). `randomize_va_space=2` and the `net.*` defaults match what most
-hardened Debian/Ubuntu baselines already ship.
-
-## Quick start
-
-```sh
-# Apply (writes the drop-in + sysctl --system):
-sudo onionarmor apply --module kernel-hardening
-
-# See what would change first (no host changes):
-sudo onionarmor apply --module kernel-hardening --dry-run
-
-# Check status (green/yellow/red; non-zero exit if any red):
-onionarmor audit --module kernel-hardening
-
-# Undo (removes the drop-in; already-live values persist until reboot):
-sudo onionarmor revert --module kernel-hardening
-```
-
-## Flags
-
-| Flag | Default | Meaning |
-|---|---|---|
-| `--dry-run` | off | Print the would-be drop-in + a before→target table per key. Changes nothing. |
-| `--verify` / `--no-verify` | verify | Post-apply, confirm each live value matches the drop-in. Verification is authoritative: a noisy `sysctl --system` (an unrelated drop-in failing) does not fail the apply if our keys all match. |
-| `-h`, `--help` | — | Module help. |
-
-## Managed sysctls
-
-Written to `/etc/sysctl.d/99-onionarmor-kernel-hardening.conf`. Source:
-<https://kspp.github.io/Recommended_Settings>.
-
-| Key | Value | Why |
-|---|---|---|
-| `kernel.dmesg_restrict` | 1 | Hide the kernel ring buffer (KASLR leaks, addresses) from non-root. |
-| `kernel.unprivileged_bpf_disabled` | 1 | No unprivileged `bpf()` — a large kernel attack surface. |
-| `kernel.kptr_restrict` | 2 | Never expose kernel pointers via `/proc`/`seq_file`. |
-| `kernel.perf_event_paranoid` | 3 | Disallow unprivileged `perf_event_open`. |
-| `kernel.randomize_va_space` | 2 | Full ASLR (stack, mmap, brk, VDSO). |
-| `kernel.yama.ptrace_scope` | 1 | Restrict `ptrace` to child processes only. |
-| `kernel.kexec_load_disabled` | 1 | Block loading a new kernel via kexec (anti-persistence). |
-| `net.core.bpf_jit_harden` | 2 | Harden the BPF JIT against spraying for all users. |
-| `net.ipv4.tcp_syncookies` | 1 | SYN-flood mitigation. |
-| `net.ipv4.conf.all.rp_filter` | 1 | Reverse-path filtering (anti-spoofing). |
-| `net.ipv4/ipv6.conf.all.accept_source_route` | 0 | Drop source-routed packets. |
-| `net.ipv4/ipv6.conf.all.accept_redirects` | 0 | Ignore ICMP redirects. |
-| `net.ipv4.conf.all.send_redirects` | 0 | Never emit ICMP redirects. |
-| `net.ipv4.conf.all.log_martians` | 1 | Log impossible-address packets. |
+Source: <https://kspp.github.io/Recommended_Settings>
 
 ## What it does
 
-1. Renders the KSPP set to a byte-deterministic drop-in (idempotent — a re-apply
-   with no change rewrites nothing) and backs up any prior managed drop-in.
-2. `sysctl --system` to load it into the running kernel.
-3. Verifies every readable key's live value matches the target. A key absent on
-   an older kernel (e.g. `kexec_load_disabled`) is a yellow warning, not a red.
+Renders a managed drop-in at `/etc/sysctl.d/99-onionarmor-kernel-hardening.conf`
+and loads it with `sysctl --system`. The drop-in sets these 15 keys:
 
-`revert` backs up then removes the drop-in and reloads. Already-loaded sysctl
-values stay live in the running kernel until a reboot — that is safe (these are
-hardening values), and the summary says so rather than pretend a file removal
-rolls back the running kernel.
+| Key | Value | Effect |
+| --- | --- | --- |
+| `kernel.dmesg_restrict` | `1` | Only root can read the kernel ring buffer. |
+| `kernel.unprivileged_bpf_disabled` | `1` | Block unprivileged BPF. |
+| `kernel.kptr_restrict` | `2` | Hide kernel pointers from `/proc`. |
+| `kernel.perf_event_paranoid` | `3` | Restrict `perf_event_open`. |
+| `net.ipv4.tcp_syncookies` | `1` | SYN-flood protection. |
+| `kernel.randomize_va_space` | `2` | Full ASLR. |
+| `kernel.yama.ptrace_scope` | `1` | Restrict `ptrace` to child processes. |
+| `kernel.kexec_load_disabled` | `1` | Disable loading a new kernel via kexec. |
+| `net.core.bpf_jit_harden` | `2` | Harden the BPF JIT against spraying. |
+| `net.ipv4.conf.all.rp_filter` | `1` | Strict reverse-path filtering. |
+| `net.ipv4.conf.all.accept_source_route` | `0` | Drop source-routed IPv4 packets. |
+| `net.ipv6.conf.all.accept_source_route` | `0` | Drop source-routed IPv6 packets. |
+| `net.ipv4.conf.all.accept_redirects` | `0` | Ignore ICMP redirects. |
+| `net.ipv4.conf.all.send_redirects` | `0` | Never send ICMP redirects. |
+| `net.ipv4.conf.all.log_martians` | `1` | Log impossible-address packets. |
 
-## Threat model
+## Risk
 
-Raises the cost of local privilege escalation and information disclosure: kernel
-pointer/dmesg leaks that bypass KASLR, unprivileged BPF/perf attack surface,
-ptrace-based credential theft between processes, kexec-based persistence, and
-basic network spoofing/redirect attacks. It does **not** replace a LSM
-(`mac-profile-install`) or `lockdown=integrity` (`onionarmor apply-lockdown`) —
-it complements them.
+**Very low.** Every key is a runtime sysctl with a conservative hardened value
+recommended upstream by KSPP. There is no kernel rebuild, no boot-time change,
+and no service restart. The change takes effect immediately and is undone by
+`revert` (or a reboot). Recommended on by default.
 
-## Tests
+## Usage
 
-`tests/bats/` drives apply→audit→revert against a stub `sysctl` that emulates
-kernel state through a flat key=value file: full-set render, the 16-key count,
-idempotency, authoritative verification (a noisy `--system` still passes when
-values match; `--no-verify` fails on a nonzero reload), drift detection, and the
-apply→audit-green→revert→audit-red round trip.
+```sh
+onionarmor apply  --module kernel-hardening            # write + load the drop-in
+onionarmor apply  --module kernel-hardening --dry-run  # preview, change nothing
+onionarmor audit  --module kernel-hardening            # green/yellow/red status
+onionarmor revert --module kernel-hardening            # remove the drop-in
+```
+
+### Flags (apply)
+
+- `--dry-run` — print the rendered drop-in plus a before(live)/after(desired)
+  table of every key. Writes nothing; never calls `sysctl --system`.
+- `--verify` / `--no-verify` — post-apply, read each key back with `sysctl -n`
+  and compare to the KSPP target (default: verify). With verification on, a
+  noisy nonzero `sysctl --system` exit does **not** fail the apply as long as the
+  live values all match (another drop-in on the host may be the cause of the
+  noise). With `--no-verify`, the reload exit code is the only success signal: a
+  nonzero reload exits `2`.
+- `-h`, `--help` — usage.
+
+## Lifecycle
+
+- **apply** is idempotent: if the drop-in already byte-matches the rendered
+  content and (when verifying) the live values already match, it prints
+  `already current` and exits `0` without reloading. Any pre-existing drop-in is
+  backed up to `/var/lib/onionarmor/kernel-hardening/backup.conf` first.
+- **audit** is read-only. A missing drop-in is a single yellow "not applied"
+  check; otherwise one check per key (green on match, red on drift, yellow if the
+  key is unreadable on this kernel). Exits non-zero on any red.
+- **revert** removes the drop-in (restoring the backup if one exists) and
+  reloads. The KSPP keys keep their hardened runtime values until a reboot — this
+  module does not forcibly un-harden the live kernel.
+- `ONIONARMOR_SKIP_RELOAD=yes` leaves the live kernel untouched in both apply and
+  revert.
+
+## Environment overrides
+
+Every command and path is env-overridable (the bats suite relies on this):
+
+| Variable | Default |
+| --- | --- |
+| `ONIONARMOR_SYSCTL_CMD` | `sysctl` |
+| `ONIONARMOR_SYSCTL_DIR` | `/etc/sysctl.d` |
+| `ONIONARMOR_KH_DROPIN_NAME` | `99-onionarmor-kernel-hardening.conf` |
+| `ONIONARMOR_KH_STATE_DIR` | `/var/lib/onionarmor/kernel-hardening` |
+| `ONIONARMOR_SKIP_RELOAD` | unset (set `yes` to skip the live reload) |
