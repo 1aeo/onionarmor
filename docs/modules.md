@@ -60,7 +60,7 @@ listed as unmapped. Each apply cites the auditor finding ids it addresses.
 
 A module lives under `modules/<name>/` and provides:
 
-```
+```text
 modules/<name>/
   apply.sh       # apply the posture
   audit.sh       # report green/yellow/red status (read-only)
