@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
-# revert.sh — undo the account-hygiene posture: cancel any pending safety latch,
-# then restore the membership/locks captured at apply time (re-add removed users
-# to their groups, unlock accounts this module locked). Best-effort; summarises.
+# revert.sh — undo account-hygiene: cancel any pending safety latch and run the
+# saved restore script (re-add removed sudo memberships, unlock locked accounts).
+# Best-effort. Purged (userdel -r) accounts cannot be restored.
 #
-# The restore is driven by the snapshot written at apply time. The actual
-# re-add/unlock commands are encoded in the staged restore.sh (the same payload
-# the latch would have fired), so manual revert and auto-revert do exactly the
-# same thing. If no snapshot exists, there is nothing to undo.
+# WARNING: reverting re-grants sudo to the cloud-init / off-allowlist accounts
+# that apply removed. Re-apply to restore the hardened posture.
 
 set -euo pipefail
 
@@ -14,96 +12,58 @@ _here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib.sh
 . "$_here/lib.sh"
 
-ah_parse_flags "$@"
+acct_parse_flags "$@"
 
-snapshot=$(ah_snapshot_path)
-restore="$ONIONARMOR_AH_STATE_DIR/restore.sh"
+restore=$(acct_restore_path)
+latch_state=$(acct_latch_state_path)
+snapshot=$(acct_snapshot_path)
 
-audit_log ah.revert.start "snapshot=$snapshot"
+warn "revert re-grants sudo to the accounts account-hygiene removed it from"
+audit_log acct.revert.start "restore=$restore"
 
 # ---------------------------------------------------------------------------
-# 1. Cancel any pending safety latch so it cannot fire after we have manually
-#    restored (or while there is nothing left to restore).
+# 1. Cancel a still-pending safety-latch at-job.
 # ---------------------------------------------------------------------------
-if oa_latch_is_armed "$AH_MODULE"; then
-  oa_latch_cancel "$AH_MODULE" || warn "could not cancel pending safety latch"
+job=$(acct_latch_pending)
+if [ -n "$job" ]; then
+  if "$ONIONARMOR_ACCT_ATRM" "$job" >/dev/null 2>&1; then
+    info "cancelled pending safety-latch at job $job"
+    audit_log acct.revert.latch "cancelled=$job"
+    rm -f "$latch_state" 2>/dev/null || warn "could not remove $latch_state"
+  else
+    warn "could not cancel safety-latch at job $job (atrm $job) — keeping state for retry"
+  fi
 else
-  info "no pending safety latch to cancel"
+  rm -f "$latch_state" 2>/dev/null || true
 fi
 
 # ---------------------------------------------------------------------------
-# 2. Restore the snapshot. We re-derive the actions from the snapshot file
-#    (rather than blindly exec-ing restore.sh) so revert works even if the
-#    staged script was removed, and so each action is individually audited.
+# 2. Run the restore script to put prior membership back.
 # ---------------------------------------------------------------------------
-if [ ! -f "$snapshot" ]; then
-  warn "no snapshot at $snapshot — account-hygiene was never applied (or state was cleared). Nothing to restore."
-  audit_log ah.revert.done "restored=0 reason=no-snapshot"
-  cat <<EOF
-
-[account-hygiene] reverted.
-  snapshot : none ($snapshot)
-  restored : nothing (no prior apply recorded)
-EOF
-  exit 0
+restore_failed=0
+if [ -f "$restore" ]; then
+  if sh "$restore"; then
+    info "restored prior sudo membership / unlocked accounts"
+    audit_log acct.revert.restore "ran=$restore"
+    rm -f "$restore" "$snapshot" 2>/dev/null || true
+  else
+    restore_failed=1
+    warn "restore script returned nonzero — keeping $restore for retry"
+  fi
+else
+  info "no restore script found — nothing to undo (apply not run, or already reverted)"
 fi
 
-# Parse the snapshot's `key=value` lines (values are space-separated tokens).
-snap_cloud_lock=$(sed -n 's/^cloud_lock=//p'   "$snapshot")
-snap_cloud_desudo=$(sed -n 's/^cloud_desudo=//p' "$snapshot")
-snap_strangers=$(sed -n 's/^strangers=//p'     "$snapshot")
-
-readded=0
-unlocked=0
-
-# Re-add cloud defaults removed from sudo.
-for u in $snap_cloud_desudo; do
-  [ -n "$u" ] || continue
-  if "$ONIONARMOR_AH_GPASSWD" -a "$u" sudo >/dev/null 2>&1; then
-    audit_log ah.revert.readd "user=$u group=sudo"
-    info "re-added to sudo: $u"
-    readded=$((readded + 1))
-  else
-    warn "could not re-add $u to sudo (gpasswd -a)"
-  fi
-done
-
-# Re-add each stranger to the group it was removed from.
-for pair in $snap_strangers; do
-  [ -n "$pair" ] || continue
-  su=${pair%%:*}; sg=${pair#*:}
-  if "$ONIONARMOR_AH_GPASSWD" -a "$su" "$sg" >/dev/null 2>&1; then
-    audit_log ah.revert.readd "user=$su group=$sg"
-    info "re-added to $sg: $su"
-    readded=$((readded + 1))
-  else
-    warn "could not re-add $su to $sg (gpasswd -a)"
-  fi
-done
-
-# Unlock accounts this module locked.
-for u in $snap_cloud_lock; do
-  [ -n "$u" ] || continue
-  if "$ONIONARMOR_AH_USERMOD" -U "$u" >/dev/null 2>&1; then
-    audit_log ah.revert.unlock "user=$u"
-    info "unlocked account: $u"
-    unlocked=$((unlocked + 1))
-  else
-    warn "could not unlock $u (usermod -U)"
-  fi
-done
-
-# ---------------------------------------------------------------------------
-# 3. Clear the snapshot + staged restore script (state is consumed).
-# ---------------------------------------------------------------------------
-rm -f "$snapshot" "$restore" 2>/dev/null || warn "could not remove state files under $ONIONARMOR_AH_STATE_DIR"
-
-audit_log ah.revert.done "restored=1 readded=$readded unlocked=$unlocked"
+audit_log acct.revert.done "restore_failed=$restore_failed"
 
 cat <<EOF
 
 [account-hygiene] reverted.
-  re-added to groups : $readded user(s)
-  unlocked accounts  : $unlocked account(s)
-  snapshot           : consumed ($snapshot)
+  membership : $([ "$restore_failed" -eq 0 ] && echo "restored from snapshot" || echo "restore FAILED — re-run revert")
+  latch      : ${job:-none} cancelled
+
+WARNING: removed accounts may again hold sudo. Re-apply to restore the posture:
+  onionarmor apply --module account-hygiene
 EOF
+
+[ "$restore_failed" -eq 0 ] || { warn "revert did not fully restore membership — re-run revert"; exit 1; }

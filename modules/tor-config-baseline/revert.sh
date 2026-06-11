@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# revert.sh — undo the tor-config-baseline posture: cancel any pending auto-revert
-# latch, restore each torrc from its backup, and reload the affected instances.
-# Best-effort; summarises what it did. If no backups exist, says so.
+# revert.sh — undo the tor-config-baseline posture: for each instance strip the
+# managed block (restoring the pre-apply backup byte-for-byte when present), then
+# reload that instance. Best-effort; clears module state on success.
 
 set -euo pipefail
 
@@ -11,70 +11,102 @@ _here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 tcb_parse_flags "$@"
 
-audit_log tcb.revert.start "state_dir=$ONIONARMOR_TCB_STATE_DIR"
+instances=$(tcb_instances)
 
-# ---------------------------------------------------------------------------
-# 1. Cancel any pending auto-revert latch (it would otherwise fire mid-revert).
-# ---------------------------------------------------------------------------
-if oa_latch_is_armed "$TCB_MODULE"; then
-  oa_latch_cancel "$TCB_MODULE" || warn "could not cleanly cancel the safety latch"
-else
-  info "no pending safety latch to cancel"
+audit_log tcb.revert.start "instances=$(printf '%s' "$instances" | awk '{print $1}' | tr '\n' ',')"
+
+if [ -z "$instances" ]; then
+  warn "no tor instances found — nothing to revert"
 fi
 
-# ---------------------------------------------------------------------------
-# 2. Restore each torrc from its backup + reload that instance.
-# ---------------------------------------------------------------------------
-backup_dir=$(tcb_backup_dir)
-restored=0
-missing=0
+affected=""        # instances whose torrc we changed back
+revert_failed=0
 
-if [ ! -d "$backup_dir" ]; then
-  warn "no backup directory at $backup_dir — nothing to restore (was apply ever run?)"
-else
-  for bkp in "$backup_dir"/*.torrc; do
-    [ -e "$bkp" ] || continue
-    inst=$(basename "$bkp" .torrc)
-    pathfile="$backup_dir/$inst.path"
-    if [ ! -f "$pathfile" ]; then
-      warn "tor@$inst: no recorded torrc path ($pathfile) — skipping"
-      missing=$((missing + 1))
-      continue
-    fi
-    target=$(cat "$pathfile")
-    if [ -z "$target" ]; then
-      warn "tor@$inst: empty recorded torrc path — skipping"
-      missing=$((missing + 1))
-      continue
-    fi
-    if cp -p "$bkp" "$target"; then
-      restored=$((restored + 1))
-      audit_log tcb.revert.restore "inst=$inst torrc=$target"
-      info "tor@$inst: restored $target from backup"
-      if tcb_reload_instance "$inst"; then
-        audit_log tcb.revert.reload "inst=$inst ok=1"
-        info "tor@$inst: reloaded"
-      else
-        audit_log tcb.revert.reload "inst=$inst ok=0"
-        warn "tor@$inst: reload returned nonzero"
-      fi
+while IFS=' ' read -r name file; do
+  [ -n "$name" ] || continue
+  backup=$(tcb_backup_path "$name")
+
+  if [ ! -f "$file" ]; then
+    warn "$name: torrc $file is gone — skipping"
+    continue
+  fi
+
+  if [ -f "$backup" ]; then
+    # Restore the pre-apply original byte-for-byte.
+    if cmp -s "$backup" "$file"; then
+      info "$name: already matches backup — nothing to restore"
     else
-      warn "tor@$inst: failed to restore $target from $bkp"
-      missing=$((missing + 1))
+      cp -p "$backup" "$file" \
+        || { warn "$name: failed to restore $backup -> $file"; revert_failed=1; continue; }
+      info "$name: restored original torrc from backup"
+      affected="$affected$name
+"
     fi
-  done
+    audit_log tcb.revert.instance "instance=$name restored=backup"
+  elif tcb_block_present "$file"; then
+    # No backup but our block is present — strip just the managed block.
+    stripped=$(tcb_strip_block < "$file" | awk '
+      { lines[NR] = $0 }
+      END { last = NR; while (last > 0 && lines[last] == "") last--
+            for (i = 1; i <= last; i++) print lines[i] }')
+    if printf '%s\n' "$stripped" > "$file.tmp.$$" && mv "$file.tmp.$$" "$file"; then
+      info "$name: stripped managed block (no backup present)"
+      audit_log tcb.revert.instance "instance=$name restored=strip"
+      affected="$affected$name
+"
+    else
+      rm -f "$file.tmp.$$" 2>/dev/null || true
+      warn "$name: failed to strip managed block from $file"
+      revert_failed=1
+    fi
+  else
+    info "$name: no managed block and no backup — nothing to do"
+  fi
+done <<EOF
+$instances
+EOF
+
+# ---------------------------------------------------------------------------
+# Reload each affected instance (unless skipped), so tor drops our directives.
+# ---------------------------------------------------------------------------
+if [ -z "$affected" ]; then
+  info "no torrc changed — nothing to reload"
+elif [ "${ONIONARMOR_SKIP_RELOAD:-}" = "yes" ]; then
+  info "ONIONARMOR_SKIP_RELOAD=yes — skipping reloads"
+else
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    target=$(tcb_reload_target "$name")
+    if "$ONIONARMOR_TCB_SYSTEMCTL" reload "$target" >/dev/null 2>&1; then
+      info "$name: reloaded $target"
+      audit_log tcb.revert.reload "instance=$name target=$target ok=1"
+    else
+      warn "$name: '$ONIONARMOR_TCB_SYSTEMCTL reload $target' returned nonzero"
+      audit_log tcb.revert.reload "instance=$name target=$target ok=0"
+    fi
+  done <<EOF
+$affected
+EOF
 fi
 
-if [ "$restored" -eq 0 ] && [ "$missing" -eq 0 ]; then
-  warn "no per-instance backups found in $backup_dir — nothing to restore"
+# ---------------------------------------------------------------------------
+# Clear module state (backups) only when every instance reverted cleanly, so a
+# partial failure keeps the backups around for a retry.
+# ---------------------------------------------------------------------------
+if [ "$revert_failed" -eq 0 ] && [ -d "$ONIONARMOR_TCB_STATE_DIR" ]; then
+  rm -rf "$ONIONARMOR_TCB_STATE_DIR" 2>/dev/null \
+    || warn "could not remove state dir $ONIONARMOR_TCB_STATE_DIR"
 fi
 
-audit_log tcb.revert.done "restored=$restored missing=$missing"
+audit_log tcb.revert.done "ok=$([ "$revert_failed" -eq 0 ] && echo 1 || echo 0)"
 
 cat <<EOF
 
 [tor-config-baseline] reverted.
-  restored : $restored torrc file(s) from $backup_dir
-  skipped  : $missing
-  note     : already-loaded tor config stays live until each instance is reloaded
+  instances : $(printf '%s' "$instances" | awk '{print $1}' | tr '\n' ' ')
+  state     : $([ "$revert_failed" -eq 0 ] && echo "cleared ($ONIONARMOR_TCB_STATE_DIR)" || echo "kept for retry ($ONIONARMOR_TCB_STATE_DIR)")
+
+Re-apply the baseline:  onionarmor apply --module tor-config-baseline
 EOF
+
+[ "$revert_failed" -eq 0 ] || { warn "revert did not fully complete on one or more instances — re-run revert"; exit 1; }

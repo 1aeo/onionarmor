@@ -1,107 +1,114 @@
-# mac-profile-install
+# Module: `mac-profile-install`
 
-**Install and enforce a Mandatory Access Control (MAC) layer for tor, matched to
-the host's distro family — AppArmor on Debian/Ubuntu, SELinux on the RHEL
-family.** A confined tor process cannot read, write, or exec outside the policy
-even if it is exploited.
+**Install + enforce a Mandatory Access Control LSM — AppArmor on Debian/Ubuntu, SELinux on RHEL/CentOS/Fedora — and put the tor profile under enforcement.**
 
-This module maps to the onionauditor **`apparmor-selinux`** category. It is
-**recommended-OFF**: a MAC layer can constrain a misconfigured tor, so the
-operator opts in deliberately.
+`mac-profile-install` brings the host under a kernel-enforced Mandatory Access
+Control (MAC) layer so a compromised `tor` (or any confined service) is boxed
+into what its policy allows, instead of having the full privileges of its user.
+It detects the distro family from `/etc/os-release` and does the right thing:
 
-## Risk
+- **Debian / Ubuntu** (`ID`/`ID_LIKE` matches `debian`/`ubuntu`) -> **AppArmor**
+  - installs `apparmor apparmor-profiles apparmor-utils` if absent,
+  - ensures the kernel cmdline carries `apparmor=1 security=apparmor`
+    (`GRUB_CMDLINE_LINUX_DEFAULT`, grub backed up first),
+  - puts the tor profile (`/etc/apparmor.d/usr.bin.tor`) into **enforce** mode.
+- **RHEL / CentOS / Fedora** (`ID_LIKE` matches `rhel`/`centos`/`fedora`) ->
+  **SELinux**
+  - installs `policycoreutils selinux-policy-targeted` if absent,
+  - sets `SELINUX=enforcing` in `/etc/selinux/config`.
 
-**Low.** It cannot lock the operator out of the box — at worst it confines
-*tor*, and `audit` surfaces exactly what state the layer is in. No safety latch
-is needed. `revert` is conservative: it **relaxes** enforcement (AppArmor
-complain mode / SELinux permissive) rather than ripping the LSM off the host,
-which would be far more destructive and could break unrelated profiles.
+> ### Risk: **low** — recommended **on by default**
+> The failure mode of this module is **"permissive, not broken"**: if a step
+> can't complete (package install fails, no tor profile yet, grub not writable),
+> the host keeps running — it is simply not yet under mandatory access control.
+> Nothing here stops a service; it only *confines* one. That's why it's part of
+> the default-on baseline.
+
+## ⚠️ Reboot / relabel — never automatic
+
+Two changes only take effect after a reboot, and **`onionarmor` never reboots or
+relabels for you**:
+
+- the AppArmor kernel cmdline (`apparmor=1 security=apparmor`) needs a reboot
+  (run `update-grub` first if your distro requires it), and
+- switching SELinux from permissive to enforcing can require a filesystem
+  **relabel** plus a reboot.
+
+`apply` prints a `REBOOT REQUIRED` notice when it stages either; schedule the
+reboot at your convenience.
 
 ## Quick start
 
 ```sh
-# Apply (detect distro, install the LSM packages, enforce tor):
-sudo onionarmor apply --module mac-profile-install
-
-# See what would change first (no host changes):
+# ALWAYS dry-run first — see the detected LSM + planned changes:
 sudo onionarmor apply --module mac-profile-install --dry-run
 
-# Force a family (testing / cross-distro):
-sudo onionarmor apply --module mac-profile-install --distro debian
+# Apply (enforce the tor profile + stage the kernel cmdline / enforcing):
+sudo onionarmor apply --module mac-profile-install
+#   ... then REBOOT when convenient if it printed REBOOT REQUIRED.
 
 # Check status (green/yellow/red; non-zero exit if any red):
 onionarmor audit --module mac-profile-install
 
-# Relax enforcement (LSM left installed):
+# Relax to permissive (LSM stays installed — never uninstalled):
 sudo onionarmor revert --module mac-profile-install
 ```
 
-## Flags
+## Options
 
-| Flag | Default | Meaning |
-|---|---|---|
-| `--distro <debian\|rhel>` | autodetect | Force the family instead of reading `/etc/os-release`. Useful for testing or forcing the path on an oddly-labelled host. |
-| `--dry-run` | off | Print the plan (detected distro, packages to install, profile/enforce actions). Changes nothing. |
-| `-h`, `--help` | — | Module help. |
+| Flag | Meaning |
+| --- | --- |
+| `--dry-run` | Print the plan (detected LSM + changes). Changes nothing. |
+| `--verify` / `--no-verify` | Post-apply verification (default: verify). |
+| `-h`, `--help` | Usage. |
 
-## What it does, per distro
+`ONIONARMOR_SKIP_RELOAD=yes` makes apply/revert **plan only** — it never invokes
+`apt`/`dnf`/`aa-enforce`/`aa-disable`/`setenforce` (symmetric across apply and
+revert), so file edits are staged without touching the live LSM.
 
-**Detection.** Reads `/etc/os-release` (`ID` / `ID_LIKE`). Debian/Ubuntu →
-`debian` (AppArmor); RHEL/CentOS/Fedora/Rocky/Alma → `rhel` (SELinux). An
-unrecognised host fails fast with guidance to pass `--distro`.
+## Audit status
 
-**Debian / Ubuntu → AppArmor**
+`audit` reports one line each for: which LSM is active, the kernel cmdline /
+enforcing mode, and the tor profile's state.
 
-1. Install `apparmor apparmor-profiles apparmor-utils` via `apt-get`.
-2. If a tor profile exists at `/etc/apparmor.d/usr.bin.tor`, `aa-enforce` it.
-   Absence is honest, not fatal — the packages are installed and a later profile
-   drop-in can be enforced.
+- **green** — the LSM is enforcing and (AppArmor) the tor profile is in enforce
+  mode.
+- **yellow** — installed but complain/permissive, or the tor profile is absent /
+  the kernel cmdline isn't staged yet.
+- **red** — no MAC LSM is active at all (AppArmor not installed, or SELinux
+  disabled). Exit code 1.
 
-**RHEL family → SELinux**
+The verdict line is `no mandatory access control LSM is enforcing` when red.
 
-1. Install `policycoreutils selinux-policy-targeted` via `dnf`.
-2. Write `SELINUX=enforcing` into `/etc/selinux/config` (portable awk rewrite +
-   `mv`) so it survives a reboot.
-3. `setenforce 1` to flip the running system now. A box booted with SELinux fully
-   disabled cannot `setenforce` live — that is surfaced honestly, with the config
-   already set to enforce for the next boot.
+## Revert
 
-**Idempotency.** If tor is already enforcing (AppArmor profile in enforce mode,
-or SELinux running **and** config = enforcing), the module installs nothing and
-prints **"already applied"**.
+`revert` is best-effort and deliberately conservative — it **does not uninstall**
+the LSM, it only steps enforcement *down*:
 
-## Audit meaning
+- **AppArmor**: `aa-disable` the tor profile (AppArmor itself stays enabled) and,
+  if apply modified the grub cmdline, restore the grub backup (reboot to take
+  effect).
+- **SELinux**: set `SELINUX=permissive` in the config (SELinux stays installed).
 
-`audit` is read-only. It reports the active LSM, its enforce state, and the tor
-profile status:
-
-| Distro | green | yellow | red |
-|---|---|---|---|
-| Debian | tor profile loaded **+ enforcing** | tor profile loaded but **complain** mode | no tor profile loaded / `aa-status` unavailable |
-| RHEL | running **enforcing** + config enforcing | running **permissive** / config permissive | SELinux **disabled** / `sestatus` unavailable / config not enforcing |
-
-Any red exits non-zero; yellow exits 0 (a relaxed-but-present layer is a warning,
-not a failure).
+After revert the host is **permissive, not broken**. Re-apply to restore
+enforcement.
 
 ## Threat model
 
-A MAC layer is defence-in-depth for a **compromised tor**: even with code
-execution inside the tor process, the kernel-enforced policy confines what files
-it can touch, what it can exec, and what capabilities it holds — turning a relay
-RCE into a far smaller blast radius. It complements, and does not replace,
-`kernel-hardening` (sysctl read-restrictions / anti-spoofing) and
-`onionarmor apply-lockdown` (`lockdown=integrity`). Leaving the LSM installed but
-permissive after `revert` keeps the policy loaded for fast re-enforcement.
+MAC confinement limits the blast radius of a compromised relay process: even with
+code execution inside `tor`, the attacker is restricted to the paths, capabilities
+and network operations the profile permits, frustrating privilege escalation,
+lateral movement, and tampering with unrelated files. Installing the LSM but
+leaving it permissive (the audit *yellow* state) gives policy violations as logs
+without enforcement — useful for tuning, but not protection; this module pushes
+to *enforce* so the policy is actually applied.
 
-## Tests
+## Overridable knobs (testing)
 
-`tests/bats/` drives apply→audit→revert against a sandbox that never touches the
-host: a fake `os-release` (Debian/Ubuntu/RHEL), stub `apt-get`/`dnf` that only
-record their `install` calls, stub `aa-enforce`/`aa-complain` that flip a
-controllable AppArmor state, a stub `aa-status` rendering real section layout,
-and stub `setenforce`/`sestatus` over a controllable SELinux runtime mode with a
-sandbox `/etc/selinux/config`. Coverage: distro detection + `--distro` override,
-the AppArmor install+enforce path, the SELinux install + `SELINUX=enforcing`
-config rewrite + `setenforce 1` path, `--dry-run` (installs/enforces nothing),
-idempotency, audit red/green/yellow for each family, revert to complain /
-permissive, and the apply→audit→revert→audit round trips. 29 tests.
+Every external command and path is env-overridable so the bats suite runs fully
+offline against stubs (never touching the real host): `ONIONARMOR_MAC_OS_RELEASE`,
+`ONIONARMOR_MAC_APT`, `ONIONARMOR_MAC_DNF`, `ONIONARMOR_MAC_AA_STATUS`,
+`ONIONARMOR_MAC_AA_ENFORCE`, `ONIONARMOR_MAC_AA_DISABLE`,
+`ONIONARMOR_MAC_APPARMOR_D`, `ONIONARMOR_MAC_SESTATUS`,
+`ONIONARMOR_MAC_SELINUX_CONFIG`, `ONIONARMOR_MAC_SETENFORCE`,
+`ONIONARMOR_GRUB_FILE`, `ONIONARMOR_MAC_STATE_DIR`.

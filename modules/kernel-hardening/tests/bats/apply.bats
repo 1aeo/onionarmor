@@ -1,81 +1,101 @@
 #!/usr/bin/env bats
-# kernel-hardening apply.sh — drop-in render, idempotency, sysctl load, verify.
+# kernel-hardening apply.sh — drop-in render, idempotence, dry-run, reload,
+# verification, and audit logging.
 
 load test_helper
-
-dropin_has() { grep -q "^$1 = $2\$" "$DROPIN"; }
 
 @test "apply: syntax check (bash -n)" {
   run bash -n "$APPLY"
   [ "$status" -eq 0 ]
 }
 
-@test "apply: writes the drop-in with the full KSPP set and loads it" {
+@test "apply: writes the drop-in with all 15 KSPP keys" {
   run bash "$APPLY"
   [ "$status" -eq 0 ]
   [ -f "$DROPIN" ]
-  dropin_has kernel.dmesg_restrict 1
-  dropin_has kernel.kptr_restrict 2
-  dropin_has kernel.perf_event_paranoid 3
-  dropin_has kernel.yama.ptrace_scope 1
-  dropin_has net.ipv4.conf.all.rp_filter 1
-  dropin_has net.ipv6.conf.all.accept_redirects 0
+  # Exactly 15 managed "key = value" lines.
+  [ "$(desired_keys | grep -c .)" -eq 15 ]
+  # Spot-check a few keys from across the set, in the required order/values.
+  grep -q '^kernel.dmesg_restrict = 1$' "$DROPIN"
+  grep -q '^kernel.kptr_restrict = 2$' "$DROPIN"
+  grep -q '^net.ipv4.tcp_syncookies = 1$' "$DROPIN"
+  grep -q '^net.ipv6.conf.all.accept_source_route = 0$' "$DROPIN"
+  grep -q '^net.ipv4.conf.all.log_martians = 1$' "$DROPIN"
+  # Managed header + revert hint + source line present.
+  grep -q 'Managed by onionarmor (module: kernel-hardening)' "$DROPIN"
+  grep -q 'Revert with: onionarmor revert --module kernel-hardening' "$DROPIN"
+  grep -q 'kspp.github.io/Recommended_Settings' "$DROPIN"
+}
+
+@test "apply: loads the keys so live == desired after --system" {
+  run bash "$APPLY"
+  [ "$status" -eq 0 ]
   grep -q -- '--system' "$STUB_SYSCTL_LOG"
+  while read -r key want; do
+    [ "$("$ONIONARMOR_SYSCTL_CMD" -n "$key")" = "$want" ]
+  done < <(desired_keys)
   [[ "$output" == *"applied."* ]]
 }
 
-@test "apply: live values match after load (verify passes)" {
-  # Seed insecure defaults; apply must flip them all.
-  seed_sysctl kernel.kptr_restrict 0
-  seed_sysctl net.ipv4.conf.all.rp_filter 0
-  run bash "$APPLY"
-  [ "$status" -eq 0 ]
-  [ "$(live_sysctl kernel.kptr_restrict)" = "2" ]
-  [ "$(live_sysctl net.ipv4.conf.all.rp_filter)" = "1" ]
-  [ "$(live_sysctl kernel.randomize_va_space)" = "2" ]
-  [[ "$output" == *"all readable KSPP keys match"* ]]
-}
-
-@test "apply: idempotent — second run rewrites nothing" {
+@test "apply: idempotent — second run says 'already current'" {
   bash "$APPLY" >/dev/null
+  : > "$STUB_SYSCTL_LOG"
   run bash "$APPLY"
   [ "$status" -eq 0 ]
   [[ "$output" == *"already current"* ]]
+  # Nothing reloaded the second time.
+  ! grep -q -- '--system' "$STUB_SYSCTL_LOG"
 }
 
-@test "apply: a count of 16 KSPP keys is written" {
-  bash "$APPLY" >/dev/null
-  n=$(grep -cE '^[a-z].* = ' "$DROPIN")
-  [ "$n" -eq 16 ]
-}
-
-@test "apply --dry-run: prints plan, writes nothing, never reloads" {
-  seed_sysctl kernel.kptr_restrict 0
+@test "apply: --dry-run writes nothing and never calls --system" {
   run bash "$APPLY" --dry-run
   [ "$status" -eq 0 ]
   [[ "$output" == *"dry-run: kernel-hardening"* ]]
-  [[ "$output" == *"kernel.kptr_restrict"* ]]
+  [[ "$output" == *"kernel.dmesg_restrict"* ]]
+  [[ "$output" == *"CURRENT"* ]]
   [ ! -e "$DROPIN" ]
   ! grep -q -- '--system' "$STUB_SYSCTL_LOG"
 }
 
-@test "apply: an unreadable key warns but does not fail (older kernels)" {
-  # kexec_load_disabled may not exist; the stub returns empty for unseeded keys
-  # only after load it is set. Force a key to stay unreadable by making the stub
-  # state read-only? Simpler: assert apply still succeeds and warns nothing fatal.
-  run bash "$APPLY"
-  [ "$status" -eq 0 ]
-}
-
-@test "apply: a noisy 'sysctl --system' exit does NOT fail apply when verify matches" {
-  KH_SYSCTL_SYSTEM_RC=1 run bash "$APPLY"
-  [ "$status" -eq 0 ]
-  [ "$(live_sysctl kernel.dmesg_restrict)" = "1" ]
-}
-
-@test "apply --no-verify: a failed 'sysctl --system' fails the apply (exit 2)" {
+@test "apply: --no-verify with a failing --system exits 2" {
   KH_SYSCTL_SYSTEM_RC=1 run bash "$APPLY" --no-verify
   [ "$status" -eq 2 ]
+  # The drop-in was still written before the reload.
+  [ -f "$DROPIN" ]
+}
+
+@test "apply: a noisy --system exit does NOT fail apply when verify matches" {
+  # Verify is authoritative: --system exits nonzero but the keys still loaded.
+  KH_SYSCTL_SYSTEM_RC=1 run bash "$APPLY"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"applied."* ]]
+  [ "$("$ONIONARMOR_SYSCTL_CMD" -n kernel.dmesg_restrict)" = "1" ]
+}
+
+@test "apply: ONIONARMOR_SKIP_RELOAD skips --system" {
+  ONIONARMOR_SKIP_RELOAD=yes run bash "$APPLY"
+  [ "$status" -eq 0 ]
+  [ -f "$DROPIN" ]
+  ! grep -q -- '--system' "$STUB_SYSCTL_LOG"
+  [[ "$output" == *"skipping sysctl --system"* ]]
+}
+
+@test "apply: backs up an existing drop-in before overwriting" {
+  mkdir -p "$ONIONARMOR_SYSCTL_DIR"
+  printf '# stale hand-written drop-in\nkernel.dmesg_restrict = 0\n' > "$DROPIN"
+  run bash "$APPLY"
+  [ "$status" -eq 0 ]
+  backup="$ONIONARMOR_KH_STATE_DIR/backup.conf"
+  [ -f "$backup" ]
+  grep -q 'stale hand-written drop-in' "$backup"
+  # The drop-in is now the managed KSPP content.
+  grep -q '^kernel.dmesg_restrict = 1$' "$DROPIN"
+}
+
+@test "apply: unknown option dies cleanly" {
+  run bash "$APPLY" --bogus
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"unknown option"* ]]
 }
 
 @test "apply: writes audit-log entries" {
@@ -84,10 +104,4 @@ dropin_has() { grep -q "^$1 = $2\$" "$DROPIN"; }
   grep -q 'kh.apply.start' "$ONIONARMOR_AUDIT_LOG"
   grep -q 'kh.apply.dropin' "$ONIONARMOR_AUDIT_LOG"
   grep -q 'kh.apply.done' "$ONIONARMOR_AUDIT_LOG"
-}
-
-@test "apply: unknown option is rejected" {
-  run bash "$APPLY" --bogus
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"unknown option"* ]]
 }

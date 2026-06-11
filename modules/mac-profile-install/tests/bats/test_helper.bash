@@ -1,14 +1,16 @@
 # Test helper for the mac-profile-install module bats suite.
 #
-# Builds a throwaway sandbox that NEVER touches the real host:
-#   * a fake /etc/os-release (Debian or RHEL, controllable per test),
-#   * stub apt-get / dnf that only record their `install` calls to a log,
-#   * stub aa-enforce / aa-complain that flip a controllable AppArmor state file,
-#   * a stub aa-status that renders that state in real aa-status section layout,
-#   * stub setenforce / sestatus over a controllable SELinux runtime-mode file,
-#   * a sandbox /etc/selinux/config and a sandbox apparmor profile path.
-# All ONIONARMOR_MAC_* are overridden into the sandbox. mktemp -d (not
-# $BATS_TEST_TMPDIR) for ubuntu-22.04's older bats.
+# Builds a throwaway sandbox with stub LSM tooling that reads/writes fake state
+# files, so the suite drives the whole module offline and never touches the real
+# host (no real apt/dnf/aa-*/setenforce):
+#   aa-status   reports AppArmor "active" + the tor profile's mode from a sandbox
+#               state file ($AA_PROFILE_STATE).
+#   aa-enforce  flips that file to "enforce"; aa-disable flips it to "disabled".
+#   apt-get     records the install into a log (no real package install).
+#   sestatus    reports the current SELinux mode from $SE_MODE_STATE.
+#   setenforce  flips $SE_MODE_STATE; dnf records the install into a log.
+# We use mktemp -d (not $BATS_TEST_TMPDIR) for compatibility with the older bats
+# packaged on ubuntu-22.04.
 
 setup() {
   MOD_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
@@ -26,166 +28,169 @@ setup() {
   export SB
   STUB="$SB/stubs"
   export STUB
-  mkdir -p "$STUB" "$SB/etc/selinux"
+  mkdir -p "$STUB"
 
-  # --- sandbox paths the module reads/writes ---
-  export ONIONARMOR_MAC_OS_RELEASE="$SB/etc/os-release"
-  export ONIONARMOR_MAC_APPARMOR_PROFILE="$SB/etc/apparmor.d/usr.bin.tor"
-  export ONIONARMOR_MAC_SELINUX_CONFIG="$SB/etc/selinux/config"
+  # --- sandbox paths the module manages ---
+  export ONIONARMOR_MAC_STATE_DIR="$SB/var/lib/onionarmor/mac-profile-install"
   export ONIONARMOR_AUDIT_LOG="$SB/var/log/onionarmor/audit.log"
   export ONIONARMOR_OPERATOR="bats-test"
 
-  # --- controllable stub state files ---
-  export INSTALL_LOG="$SB/install.log"; : > "$INSTALL_LOG"
-  export ACTION_LOG="$SB/action.log";   : > "$ACTION_LOG"
-  # AppArmor: tor profile state, one of enforce|complain|absent (default absent).
-  export AA_TOR_STATE="$SB/aa-tor-state"; printf 'absent\n' > "$AA_TOR_STATE"
-  # SELinux running mode, one of enforcing|permissive|disabled (default disabled).
-  export SE_RUNMODE="$SB/se-runmode"; printf 'disabled\n' > "$SE_RUNMODE"
+  export ONIONARMOR_MAC_OS_RELEASE="$SB/etc/os-release"
+  export ONIONARMOR_GRUB_FILE="$SB/etc/default/grub"
+  export ONIONARMOR_MAC_SELINUX_CONFIG="$SB/etc/selinux/config"
+  export ONIONARMOR_MAC_APPARMOR_D="$SB/etc/apparmor.d"
+
+  mkdir -p "$ONIONARMOR_MAC_APPARMOR_D" \
+           "$(dirname "$ONIONARMOR_MAC_OS_RELEASE")" \
+           "$(dirname "$ONIONARMOR_GRUB_FILE")" \
+           "$(dirname "$ONIONARMOR_MAC_SELINUX_CONFIG")"
+
+  # --- fake state files driven by the stubs ---
+  export AA_PROFILE_STATE="$SB/aa-profile.state"   # enforce|complain|disabled|absent
+  export SE_MODE_STATE="$SB/se-mode.state"         # enforcing|permissive|disabled
+  export APT_LOG="$SB/apt.log"
+  export DNF_LOG="$SB/dnf.log"
+  : > "$APT_LOG"
+  : > "$DNF_LOG"
+
+  # Default fixtures: a default grub line and a permissive SELinux config so the
+  # awk edits have something to rewrite.
+  printf 'GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"\n' > "$ONIONARMOR_GRUB_FILE"
+  printf 'SELINUX=permissive\nSELINUXTYPE=targeted\n' > "$ONIONARMOR_MAC_SELINUX_CONFIG"
 
   _build_stubs
-  export ONIONARMOR_MAC_APT="$STUB/apt-get"
-  export ONIONARMOR_MAC_DNF="$STUB/dnf"
-  export ONIONARMOR_MAC_AA_ENFORCE="$STUB/aa-enforce"
-  export ONIONARMOR_MAC_AA_COMPLAIN="$STUB/aa-complain"
+
+  # Point the module's command knobs at the stubs.
   export ONIONARMOR_MAC_AA_STATUS="$STUB/aa-status"
-  export ONIONARMOR_MAC_SETENFORCE="$STUB/setenforce"
+  export ONIONARMOR_MAC_AA_ENFORCE="$STUB/aa-enforce"
+  export ONIONARMOR_MAC_AA_DISABLE="$STUB/aa-disable"
+  export ONIONARMOR_MAC_APT="$STUB/apt-get"
   export ONIONARMOR_MAC_SESTATUS="$STUB/sestatus"
+  export ONIONARMOR_MAC_SETENFORCE="$STUB/setenforce"
+  export ONIONARMOR_MAC_DNF="$STUB/dnf"
 }
 
 teardown() {
   if [ -n "${SB:-}" ] && [ -d "$SB" ]; then rm -rf "$SB"; fi
 }
 
-# --- os-release fixtures --------------------------------------------------
-seed_os_release_debian() {
+# set_debian: write a Debian/Ubuntu os-release fixture (=> AppArmor branch).
+set_debian() {
   cat > "$ONIONARMOR_MAC_OS_RELEASE" <<'EOF'
-PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"
-NAME="Debian GNU/Linux"
-ID=debian
-VERSION_CODENAME=bookworm
-EOF
-}
-
-seed_os_release_ubuntu() {
-  cat > "$ONIONARMOR_MAC_OS_RELEASE" <<'EOF'
-PRETTY_NAME="Ubuntu 24.04 LTS"
-NAME="Ubuntu"
 ID=ubuntu
 ID_LIKE=debian
-VERSION_CODENAME=noble
+VERSION_ID="22.04"
 EOF
 }
 
-seed_os_release_rhel() {
+# set_rhel: write a RHEL/CentOS/Fedora os-release fixture (=> SELinux branch).
+set_rhel() {
   cat > "$ONIONARMOR_MAC_OS_RELEASE" <<'EOF'
-NAME="Rocky Linux"
-ID="rocky"
+ID=rocky
 ID_LIKE="rhel centos fedora"
 VERSION_ID="9.3"
 EOF
 }
 
-# --- selinux config fixtures ----------------------------------------------
-# seed_selinux_config <enforcing|permissive|disabled> : write a stock config.
-seed_selinux_config() {
-  cat > "$ONIONARMOR_MAC_SELINUX_CONFIG" <<EOF
-# This file controls the state of SELinux on the system.
-SELINUX=$1
-SELINUXTYPE=targeted
-EOF
+# seed_tor_profile [mode]: create the tor AppArmor profile file on disk and set
+# its initial mode (default "complain"). Mode is "absent" => no file.
+seed_tor_profile() {
+  local mode="${1:-complain}"
+  if [ "$mode" = "absent" ]; then
+    rm -f "$ONIONARMOR_MAC_APPARMOR_D/usr.bin.tor"
+    printf 'absent\n' > "$AA_PROFILE_STATE"
+    return 0
+  fi
+  printf '# tor apparmor profile (test fixture)\n' > "$ONIONARMOR_MAC_APPARMOR_D/usr.bin.tor"
+  printf '%s\n' "$mode" > "$AA_PROFILE_STATE"
 }
 
-# --- AppArmor profile + state knobs ---------------------------------------
-seed_apparmor_profile() {
-  mkdir -p "$(dirname "$ONIONARMOR_MAC_APPARMOR_PROFILE")"
-  printf '# stub tor apparmor profile\n/usr/bin/tor {\n}\n' > "$ONIONARMOR_MAC_APPARMOR_PROFILE"
-}
-set_aa_tor_state() { printf '%s\n' "$1" > "$AA_TOR_STATE"; }
-set_se_runmode()   { printf '%s\n' "$1" > "$SE_RUNMODE"; }
-
-# config_selinux_mode : read back the persisted SELINUX= value from the sandbox.
-config_selinux_mode() {
-  awk -F= '/^[[:space:]]*SELINUX[[:space:]]*=/{gsub(/[ \t]/,"",$2);print $2;exit}' \
-    "$ONIONARMOR_MAC_SELINUX_CONFIG"
+# seed_selinux_mode <enforcing|permissive|disabled>: live mode for sestatus.
+seed_selinux_mode() {
+  printf '%s\n' "$1" > "$SE_MODE_STATE"
 }
 
 _build_stubs() {
-  # apt-get / dnf: record an "install ..." line; succeed.
-  for pm in apt-get dnf; do
-    cat > "$STUB/$pm" <<EOF
-#!/bin/sh
-if [ "\$1" = install ]; then printf '$pm %s\\n' "\$*" >> "\$INSTALL_LOG"; fi
-exit 0
-EOF
-  done
-
-  # aa-enforce <profile>: record + flip the tor state to enforce.
-  cat > "$STUB/aa-enforce" <<'EOF'
-#!/bin/sh
-printf 'aa-enforce %s\n' "$*" >> "$ACTION_LOG"
-printf 'enforce\n' > "$AA_TOR_STATE"
-exit 0
-EOF
-
-  # aa-complain <profile>: record + flip the tor state to complain.
-  cat > "$STUB/aa-complain" <<'EOF'
-#!/bin/sh
-printf 'aa-complain %s\n' "$*" >> "$ACTION_LOG"
-printf 'complain\n' > "$AA_TOR_STATE"
-exit 0
-EOF
-
-  # aa-status: render real aa-status section layout from $AA_TOR_STATE.
+  # aa-status: report AppArmor enabled, and (if loaded) the tor profile under the
+  # matching "N profiles are in <mode> mode." header. Mode read from
+  # $AA_PROFILE_STATE; "absent"/missing => tor profile not loaded.
   cat > "$STUB/aa-status" <<'EOF'
 #!/bin/sh
-st=$(cat "$AA_TOR_STATE" 2>/dev/null || echo absent)
+STATE="${AA_PROFILE_STATE:-/dev/null}"
+mode=absent
+[ -f "$STATE" ] && mode=$(cat "$STATE" 2>/dev/null)
 echo "apparmor module is loaded."
-case "$st" in
+case "$mode" in
   enforce)
-    echo "2 profiles are in enforce mode."
-    echo "   /usr/bin/man"
-    echo "   /usr/bin/tor"
+    echo "1 profiles are in enforce mode."
+    echo "   usr.bin.tor"
     echo "0 profiles are in complain mode."
     ;;
   complain)
-    echo "1 profiles are in enforce mode."
-    echo "   /usr/bin/man"
+    echo "0 profiles are in enforce mode."
     echo "1 profiles are in complain mode."
-    echo "   /usr/bin/tor"
+    echo "   usr.bin.tor"
     ;;
   *)
-    echo "1 profiles are in enforce mode."
-    echo "   /usr/bin/man"
+    echo "0 profiles are in enforce mode."
     echo "0 profiles are in complain mode."
     ;;
 esac
 exit 0
 EOF
 
-  # setenforce <0|1>: record + flip the running SELinux mode.
+  # aa-enforce <profile>: flip the tor profile state to enforce.
+  cat > "$STUB/aa-enforce" <<'EOF'
+#!/bin/sh
+STATE="${AA_PROFILE_STATE:?}"
+printf 'enforce\n' > "$STATE"
+echo "Setting $1 to enforce mode."
+exit 0
+EOF
+
+  # aa-disable <profile>: flip the tor profile state to disabled.
+  cat > "$STUB/aa-disable" <<'EOF'
+#!/bin/sh
+STATE="${AA_PROFILE_STATE:?}"
+printf 'disabled\n' > "$STATE"
+echo "Disabling $1."
+exit 0
+EOF
+
+  # apt-get: record the install args; do not install anything.
+  cat > "$STUB/apt-get" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >> "${APT_LOG:-/dev/null}"
+exit 0
+EOF
+
+  # sestatus: report the current SELinux mode from $SE_MODE_STATE (default
+  # permissive).
+  cat > "$STUB/sestatus" <<'EOF'
+#!/bin/sh
+STATE="${SE_MODE_STATE:-/dev/null}"
+mode=permissive
+[ -f "$STATE" ] && mode=$(cat "$STATE" 2>/dev/null)
+echo "SELinux status:                 enabled"
+echo "Current mode:                   $mode"
+exit 0
+EOF
+
+  # setenforce <0|1|Enforcing|Permissive>: flip $SE_MODE_STATE.
   cat > "$STUB/setenforce" <<'EOF'
 #!/bin/sh
-printf 'setenforce %s\n' "$*" >> "$ACTION_LOG"
+STATE="${SE_MODE_STATE:?}"
 case "$1" in
-  1) printf 'enforcing\n'  > "$SE_RUNMODE" ;;
-  0) printf 'permissive\n' > "$SE_RUNMODE" ;;
+  1|Enforcing|enforcing)   printf 'enforcing\n'  > "$STATE" ;;
+  0|Permissive|permissive) printf 'permissive\n' > "$STATE" ;;
 esac
 exit 0
 EOF
 
-  # sestatus: render the running mode from $SE_RUNMODE.
-  cat > "$STUB/sestatus" <<'EOF'
+  # dnf: record the install args; do not install anything.
+  cat > "$STUB/dnf" <<'EOF'
 #!/bin/sh
-mode=$(cat "$SE_RUNMODE" 2>/dev/null || echo disabled)
-if [ "$mode" = disabled ]; then
-  echo "SELinux status:                 disabled"
-  exit 0
-fi
-echo "SELinux status:                 enabled"
-echo "SELinuxfs mount:                /sys/fs/selinux"
-echo "Current mode:                   $mode"
-echo "Policy from config file:        targeted"
+printf '%s\n' "$*" >> "${DNF_LOG:-/dev/null}"
 exit 0
 EOF
 

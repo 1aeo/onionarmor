@@ -1,122 +1,122 @@
-# package-minimization
+# Module: `package-minimization`
 
-**Purge build/debug/network-analysis tools that have no place on a hardened Tor
-relay — compilers, debuggers, packet sniffers, tracers. Each expands the local
-attack surface and aids post-exploitation; this module removes the installed
-ones (only on the operator's explicit `--confirm`).**
+**Remove the build toolchain + debug tooling from a production relay — smaller attack surface, fully reversible by reinstalling on demand.**
 
-It maps to the onionauditor **`package-hygiene`** category.
+`package-minimization` removes packages a production tor relay does not need at
+runtime but that an attacker who lands a shell would love to find: a compiler to
+build a rootkit, a debugger to inspect the process, a packet sniffer to read
+traffic. Removing them shrinks the post-exploitation surface. Everything it
+removes is reinstallable with one `revert`, so the posture is reversible.
 
-## Risk
+**Risk: low. DEFAULT-ON** — recommended on by default for production relays;
+**skipped automatically on `build-host` / `ci` roles** (which legitimately need a
+toolchain). The interactive confirmation prompt is the safety rail before any
+removal.
 
-**Low**, but **recommended-OFF by default**. Removal is destructive (a `purge`
-deletes the package and its config) and cannot be auto-reversed, so apply
-**refuses** to remove anything without `--confirm`. No safety latch is needed —
-nothing here can lock you out or drop a tor listener; the worst case is having
-to `apt-get install` a tool back. A host whose declared role is `build-host`
-legitimately needs these toolchains, so the module **skips** it entirely there.
+## Target package set
+
+```
+gcc g++ make cmake build-essential
+tcpdump nc netcat-openbsd netcat-traditional
+strace ltrace gdb
+python3-dev
+```
+
+Only the packages **actually installed** are removed; the rest are ignored. The
+exact set is overridable via `ONIONARMOR_PM_PACKAGES`.
 
 ## Quick start
 
 ```sh
-# Preview what would be removed + the reclaimable space (no host changes):
+# ALWAYS dry-run first — see what would be removed + the reclaimable size:
 sudo onionarmor apply --module package-minimization --dry-run
 
-# Actually purge the installed removable tools (required confirm):
-sudo onionarmor apply --module package-minimization --confirm
+# Apply (prompts for confirmation before removing):
+sudo onionarmor apply --module package-minimization
+#   ...or skip the prompt:
+sudo onionarmor apply --module package-minimization --yes
 
-# Check status (green/yellow/red; non-zero exit if any red):
+# Check status (advisory green/yellow; never red):
 onionarmor audit --module package-minimization
 
-# Print the exact reinstall command for whatever was removed:
-onionarmor revert --module package-minimization
+# Undo — reinstall exactly what was removed:
+sudo onionarmor revert --module package-minimization
 ```
 
-A bare `apply` with neither `--dry-run` nor `--confirm` **refuses** and removes
-nothing, so packages can never be stripped silently.
+## Role gating
 
-## Flags
+The host role is read from the `role=` line in `/etc/onionarmor/role.conf`
+(overridable via `ONIONARMOR_PM_ROLE_FILE`):
+
+| Role | Behaviour |
+|---|---|
+| `build-host`, `ci` | **SKIP** — these legitimately need a toolchain; nothing is removed, exit 0. |
+| `relay-mid`, `relay-guard`, `relay-exit` | **proceed** — the toolchain is removable on a relay. |
+| unset / other | **proceed** — same as a relay. |
+
+The detected role is stated in every command's output.
+
+## Flags (`apply`)
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--dry-run` | off | List the installed removable packages and the disk space (KiB/MiB) that would be reclaimed. Changes nothing. Exits 0. |
-| `--confirm` | off | Actually `apt-get purge -y` the present removable packages and record them for revert. Without this (and without `--dry-run`) apply refuses. |
-| `-h`, `--help` | — | Module help. |
+| `--yes`, `--assume-yes` | prompt | Skip the interactive confirmation. |
+| `--dry-run` | off | Print the removable packages + reclaimable size. Changes nothing. |
+| `--verify` / `--no-verify` | verify | Post-apply: re-query each removed package is gone (exit 2 if any survive). |
 
-## Removed packages
+## What `audit` checks
 
-The default removable set (override with `ONIONARMOR_PKG_REMOVE_LIST`):
+Read-only; findings are **advisory** (this module produces no reds):
 
-| Package(s) | Why it has no place on a relay |
+1. **host role** — the detected role (green), or **toolchain retained** (green)
+   on `build-host` / `ci`.
+2. **per package** — green if absent, **yellow** "removable: `<pkg>` (`<size>`)"
+   if present.
+3. **reclaimable** — total size of the removable packages.
+
+It ends with the shared green/yellow verdict (exit 0).
+
+## Revert
+
+`revert` reinstalls the exact set recorded at apply time (from
+`removed.list`) via `apt-get install -y`, then clears the list on success. An
+empty or missing list is a clean no-op.
+
+## `ONIONARMOR_SKIP_RELOAD`
+
+`ONIONARMOR_SKIP_RELOAD=yes` means **do not actually invoke apt** — symmetric in
+apply and revert. `apply` still computes the removable set and records it;
+`revert` reports what it would reinstall. Useful for staging / inspection.
+
+## Files this module manages
+
+| Path | Purpose |
 |---|---|
-| `gcc` `g++` `make` `cmake` `build-essential` | A toolchain lets an attacker compile a rootkit/exploit in place. |
-| `gdb` | Attach to and inspect/patch a running `tor` process. |
-| `strace` `ltrace` | Trace syscalls/library calls of `tor` — secrets, descriptors. |
-| `tcpdump` | Sniff local traffic (deanonymisation aid). |
-| `nc` `netcat-openbsd` `netcat-traditional` | Ad-hoc reverse shells / data exfil. |
-| `python3-dev` | Pulls headers/toolchain for building native modules. |
+| Installed packages (via `apt-get`) | the removed / reinstalled toolchain |
+| `/var/lib/onionarmor/package-minimization/removed.list` | the recorded removed set, for `revert` |
 
-Only packages that are **actually installed** are ever touched — detected via
-`dpkg-query`. The four **critical** post-exploitation tools (`gcc`, `gdb`,
-`tcpdump`, `strace`) drive the audit's RED verdict; the rest are YELLOW.
+Every path and external command is overridable via environment variables (see
+`lib.sh`) so the bats suite drives the whole module against stub `dpkg-query` /
+`apt-get`, never touching the real host.
 
-## What it does
+## Coordination with other modules
 
-1. Queries `dpkg-query` for which of the removable set is installed (read-only).
-2. `--dry-run` prints that present subset and a reclaim estimate (summed
-   `${Installed-Size}` in KiB) and exits — no changes.
-3. With `--confirm` (and not on a `build-host`), `apt-get purge -y` the present
-   subset in one call, then records the removed names to
-   `/var/lib/onionarmor/package-minimization/removed.list` so revert can quote
-   them back. Idempotent: a re-run finds nothing left and is a clean no-op.
-
-### Role skip
-
-If `/etc/onionarmor/role.conf` declares `role=build-host` (the skip role is
-overridable via `ONIONARMOR_PKG_SKIP_ROLE`), apply prints a skip message and
-removes nothing, and audit reports a single **yellow "skipped (build-host
-role)"** rather than flagging the toolchains — a build host is supposed to have
-them.
-
-### Audit meaning
-
-- **GREEN** — none of the removable packages are installed.
-- **YELLOW** — only non-critical removables are present (e.g. `make`, `cmake`),
-  or the host is a `build-host` (intentional skip). Exit 0.
-- **RED** — a critical post-exploitation tool (`gcc`/`gdb`/`tcpdump`/`strace`)
-  is still installed. Exit 1.
-
-Audit also prints the total reclaimable size. It is strictly read-only.
-
-## Reinstall / revert note
-
-You **cannot** un-purge a package — the bits are gone. `revert` is therefore
-best-effort and honest: it makes **no** host changes itself and instead prints
-the exact `apt-get install -y <list>` command to reinstall whatever this module
-recorded removing (read from `removed.list`), then explains that purge is not
-auto-reversible. With no removal on record it says so and exits clean.
-
-## Threat model
-
-Shrinks the **post-exploitation** surface available to an attacker who has
-already obtained a (possibly unprivileged) shell on the relay: no in-place
-compiler to build a rootkit, no `gdb` to attach to `tor`, no `strace`/`ltrace`
-to lift secrets or descriptors from the running process, no `tcpdump` to sniff
-traffic for deanonymisation, no `netcat` for ad-hoc reverse shells or exfil. It
-does **not** prevent initial compromise and is not a substitute for the
-kernel/MAC/network modules — it removes convenient tooling, complementing them.
+Independent of the network/kernel posture modules — it touches the installed
+package set only, not listeners, sysctl, or firewall rules.
 
 ## Tests
 
-`tests/bats/` drives apply→audit→revert against a stub `dpkg-query` (a
-controllable installed set + per-package KiB sizes) and a stub `apt-get` (records
-purge/install args, never touches the host), with a sandboxed
-`ONIONARMOR_ETC_DIR` role file and state dir. Coverage (27 tests): `bash -n`;
-dry-run lists present removables + reclaim estimate and changes/purges nothing;
-a bare apply without `--confirm` refuses (no purge, no state); `--confirm` purges
-exactly the installed removables (asserting the apt args), ignores non-removable
-and not-installed packages, and records the removed set; idempotent re-run;
-`build-host` role skips (no purge) in apply and reports yellow in audit; audit
-RED on critical tools / GREEN when none / YELLOW on non-critical; revert prints
-the reinstall command from recorded state and stays read-only; the
-apply→audit-green→revert round trip; and the audit-log lines.
+```sh
+bats modules/package-minimization/tests/bats/
+```
+
+The offline suite stubs `dpkg-query` and `apt-get` against a fake
+installed-package DB in a sandbox, covering: removal of installed targets +
+`removed.list` recording; `build-host` / `ci` skip; `--dry-run` (no changes);
+the default-no confirm abort; nothing-installed and idempotent re-runs; the
+`SKIP_RELOAD` plan-only path; audit advisory yellows / all-green / retained; and
+the apply → revert reinstall cycle.
+
+---
+
+**See also:** [Modules overview](../README.md) · [`firewall-default-deny`](../firewall-default-deny/README.md) · [`kernel-reserved-ports`](../kernel-reserved-ports/README.md)

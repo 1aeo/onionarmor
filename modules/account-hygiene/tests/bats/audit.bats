@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# account-hygiene audit.sh — green/yellow/red status, read-only.
+# account-hygiene audit.sh — read-only green/yellow/red status + exit codes.
 
 load test_helper
 
@@ -8,79 +8,51 @@ load test_helper
   [ "$status" -eq 0 ]
 }
 
-@test "audit: GREEN on a clean baseline (no cloud defaults, empty priv groups)" {
-  write_allowlist operator
+@test "audit: a clean baseline has no reds and exits 0" {
   run bash "$AUDIT"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"all green"* ]]
+  [[ "$output" == *"root is the only UID-0 account"* ]]
 }
 
-@test "audit: RED when a present cloud default is unlocked / in sudo" {
-  add_account ubuntu 1001
-  set_group_members sudo "ubuntu,operator"
-  write_allowlist operator
-  run bash "$AUDIT"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"cloud default: ubuntu"* ]]
-  [[ "$output" == *"in_sudo=yes"* ]]
-}
-
-@test "audit: RED on a priv-group stranger not in the allowlist" {
-  add_account stranger 1002
-  set_group_members sudo "operator,stranger"
-  write_allowlist operator
-  run bash "$AUDIT"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"stranger"* ]]
-  [[ "$output" == *"not in"* ]]
-}
-
-@test "audit: YELLOW (not red) when the allowlist file is missing" {
-  add_account stranger 1002
-  set_group_members sudo "operator,stranger"
-  # No allowlist file.
+@test "audit: a leftover cloud-init sudo user is yellow" {
+  seed_user ubuntu 1001
+  add_to_group ubuntu sudo
   run bash "$AUDIT"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"allowlist"* ]]
-  [[ "$output" == *"missing"* ]]
+  [[ "$output" == *"cloud-init sudo users"* ]]
+  [[ "$output" == *"ubuntu"* ]]
 }
 
-@test "audit: RED on a non-root UID-0 account" {
-  add_account backdoor 0
-  write_allowlist operator
+@test "audit: a shared UID-0 account is red and exits non-zero" {
+  add_uid0 backdoor
   run bash "$AUDIT"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"UID 0"* ]]
-  [[ "$output" == *"backdoor"* ]]
+  [[ "$output" == *"shared UID-0"* ]]
 }
 
-@test "audit: RED on a blanket NOPASSWD:ALL sudoers.d file" {
-  write_allowlist operator
-  write_nopasswd_sudoers 90-devs
+@test "audit: a blanket NOPASSWD: ALL sudoers file is red" {
+  add_nopasswd_all 90-admins
   run bash "$AUDIT"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"NOPASSWD:ALL"* ]]
+  [[ "$output" == *"NOPASSWD"* ]]
 }
 
-@test "audit: YELLOW when a safety latch is pending" {
-  add_account ubuntu 1001
-  set_group_members sudo "ubuntu,operator"
-  write_allowlist operator
-  bash "$APPLY" --confirm >/dev/null
+@test "audit: off-allowlist sudo users are yellow" {
+  seed_user eve 1002
+  add_to_group eve sudo
+  set_allowlist operator
   run bash "$AUDIT"
-  # cloud default now locked+desudoed so the only non-green is the pending latch.
   [ "$status" -eq 0 ]
-  [[ "$output" == *"safety latch"* ]]
-  [[ "$output" == *"pending"* ]]
+  [[ "$output" == *"off-allowlist sudo"* ]]
+  [[ "$output" == *"eve"* ]]
 }
 
-@test "audit: GREEN after apply once the latch is cancelled" {
-  add_account ubuntu 1001
-  set_group_members sudo "ubuntu,operator"
-  write_allowlist operator
-  bash "$APPLY" --confirm >/dev/null
-  bash "$APPLY" --cancel-safety-latch >/dev/null
+@test "audit: green after apply cleans the cloud-init user" {
+  seed_user ubuntu 1001
+  add_to_group ubuntu sudo
+  bash "$APPLY" >/dev/null
+  job=$(cat "$ONIONARMOR_ACCT_STATE_DIR/safety-latch.job"); "$STUB/atrm" "$job"
   run bash "$AUDIT"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"all green"* ]]
+  [[ "$output" == *"no cloud-init account holds sudo"* ]]
 }

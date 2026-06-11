@@ -1,138 +1,104 @@
 #!/usr/bin/env bats
-# bin/onionarmor remediate — map an onionauditor scorecard to modules, plan in
-# the safe order, and (with --apply) drive each module via a stubbed runner.
+# remediate --from-audit — map an onionauditor scan to modules + apply ordering.
 
-setup() {
-  ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
-  export ONIONARMOR_BIN="$ROOT/bin/onionarmor"
-  export FIXTURE="$ROOT/tests/fixtures/onionauditor-scorecard.json"
+load test_helper
 
-  SB="$(mktemp -d)"; export SB
-  export ONIONARMOR_AUDIT_LOG="$SB/audit.log"
-  export ONIONARMOR_OPERATOR="bats-test"
+FIXTURE() { printf '%s/tests/fixtures/auditor-scan-sample.json' "$ONIONARMOR_ROOT"; }
 
-  # A sandbox modules dir where every module the fixture maps to is a valid
-  # (empty) module, so module_is_valid passes and nothing is skipped for being
-  # "not installed" — lets the --apply tests assert pure ordering + safety logic.
-  export ONIONARMOR_MODULES_DIR="$SB/modules"
-  for m in kernel-hardening firewall-default-deny service-inventory \
-           mac-profile-install package-minimization chrony-pinning \
-           account-hygiene tor-config-baseline ssh-hardening; do
-    mkdir -p "$ONIONARMOR_MODULES_DIR/$m"
-    for a in apply audit revert; do
-      printf '#!/usr/bin/env bash\n:\n' > "$ONIONARMOR_MODULES_DIR/$m/$a.sh"
-    done
-  done
-
-  # Runner stub: record the order modules are applied; fail any module named in
-  # $FAIL_MODULES (space-separated).
-  export RUN_LOG="$SB/run.log"; : > "$RUN_LOG"
-  cat > "$SB/runner" <<'EOF'
-#!/bin/sh
-printf '%s\n' "$1" >> "${RUN_LOG:?}"
-case " ${FAIL_MODULES:-} " in *" $1 "*) exit 7 ;; esac
-exit 0
-EOF
-  chmod +x "$SB/runner"
-  export ONIONARMOR_REMEDIATE_RUNNER="$SB/runner"
-}
-
-teardown() {
-  if [ -n "${SB:-}" ] && [ -d "$SB" ]; then rm -rf "$SB"; fi
-}
-
-@test "remediate: requires --from-audit" {
-  run bash "$ONIONARMOR_BIN" remediate
+@test "remediate: --from-audit is required" {
+  run "$ONIONARMOR_BIN" remediate
   [ "$status" -ne 0 ]
   [[ "$output" == *"--from-audit"* ]]
 }
 
-@test "remediate: missing scorecard file errors clearly" {
-  run bash "$ONIONARMOR_BIN" remediate --from-audit "$SB/nope.json"
+@test "remediate: rejects invalid JSON" {
+  bad="$SANDBOX/bad.json"; printf 'not json' > "$bad"
+  run "$ONIONARMOR_BIN" remediate --from-audit "$bad"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"not found or unreadable"* ]]
+  [[ "$output" == *"not valid JSON"* ]]
 }
 
-@test "remediate: dry-run groups findings by module and excludes passes" {
-  run bash "$ONIONARMOR_BIN" remediate --from-audit "$FIXTURE"
+@test "remediate: dry-run prints a plan mapping categories to modules" {
+  run "$ONIONARMOR_BIN" remediate --from-audit "$(FIXTURE)"
   [ "$status" -eq 0 ]
   [[ "$output" == *"kernel-hardening"* ]]
+  [[ "$output" == *"account-hygiene"* ]]
+  [[ "$output" == *"firewall-default-deny"* ]]
   [[ "$output" == *"ssh-hardening"* ]]
-  [[ "$output" == *"DRY-RUN"* ]]
-  # pass-status findings must NOT appear.
-  ! [[ "$output" == *"protocol-2"* ]]
-  ! [[ "$output" == *"randomize_va_space"* ]]
+  [[ "$output" == *"tor-config-baseline"* ]]
+  [[ "$output" == *"package-minimization"* ]]
+  [[ "$output" == *"DRY RUN"* ]]
 }
 
-@test "remediate: header carries host/profile/grade from the scorecard" {
-  run bash "$ONIONARMOR_BIN" remediate --from-audit "$FIXTURE"
-  [[ "$output" == *"host=relay01.example.invalid"* ]]
-  [[ "$output" == *"grade=F"* ]]
-}
-
-@test "remediate: honours a structured remediation.module override" {
-  # The time-ntp finding carries remediation.module=chrony-pinning (not the
-  # category map) and must be grouped under chrony-pinning.
-  run bash "$ONIONARMOR_BIN" remediate --from-audit "$FIXTURE"
-  [[ "$output" == *"chrony-pinning"* ]]
-}
-
-@test "remediate: kernel-hardening is planned before ssh-hardening; ssh marked LAST" {
-  run bash "$ONIONARMOR_BIN" remediate --from-audit "$FIXTURE"
-  kern_line=$(printf '%s\n' "$output" | grep -n 'kernel-hardening' | head -1 | cut -d: -f1)
-  ssh_line=$(printf '%s\n' "$output" | grep -n 'ssh-hardening' | head -1 | cut -d: -f1)
-  [ "$kern_line" -lt "$ssh_line" ]
-  [[ "$output" == *"[APPLIED LAST]"* ]]
-}
-
-@test "remediate --apply: runs modules via the runner in the planned order, ssh last" {
-  run bash "$ONIONARMOR_BIN" remediate --from-audit "$FIXTURE" --apply
+@test "remediate: dry-run is the default (no host changes implied)" {
+  run "$ONIONARMOR_BIN" remediate --from-audit "$(FIXTURE)"
   [ "$status" -eq 0 ]
-  # kernel-hardening is first applied, ssh-hardening is last applied.
-  [ "$(head -1 "$RUN_LOG")" = "kernel-hardening" ]
-  [ "$(tail -1 "$RUN_LOG")" = "ssh-hardening" ]
-  # firewall before service-inventory.
-  fw=$(grep -n '^firewall-default-deny$' "$RUN_LOG" | cut -d: -f1)
-  si=$(grep -n '^service-inventory$' "$RUN_LOG" | cut -d: -f1)
-  [ "$fw" -lt "$si" ]
-  [[ "$output" == *"ran="* ]]
+  [[ "$output" == *"DRY RUN"* ]]
 }
 
-@test "remediate --apply: a prior module failure SKIPS ssh-hardening (no lockout risk)" {
-  FAIL_MODULES="firewall-default-deny" run bash "$ONIONARMOR_BIN" remediate --from-audit "$FIXTURE" --apply
-  [ "$status" -eq 2 ]
-  # ssh-hardening must NOT have been run.
-  ! grep -qx 'ssh-hardening' "$RUN_LOG"
-  [[ "$output" == *"refusing SSH risk"* ]]
-  [[ "$output" == *"failed=1"* ]]
-}
-
-@test "remediate --apply: skips modules that are not installed" {
-  # Remove ssh-hardening from the sandbox so it is 'not installed'.
-  rm -rf "$ONIONARMOR_MODULES_DIR/ssh-hardening"
-  run bash "$ONIONARMOR_BIN" remediate --from-audit "$FIXTURE" --apply
+@test "remediate: cites the onionauditor finding ids per module" {
+  run "$ONIONARMOR_BIN" remediate --from-audit "$(FIXTURE)"
   [ "$status" -eq 0 ]
-  ! grep -qx 'ssh-hardening' "$RUN_LOG"
-  [[ "$output" == *"not installed"* ]]
+  [[ "$output" == *"ssh-hardness:permit-root-login"* ]]
+  [[ "$output" == *"firewall:default-deny"* ]]
+  [[ "$output" == *"accounts:cloudinit-sudo"* ]]
 }
 
-@test "remediate --apply: writes audit-log entries" {
-  run bash "$ONIONARMOR_BIN" remediate --from-audit "$FIXTURE" --apply
+@test "remediate: ssh-hardening is flagged to apply LAST" {
+  run "$ONIONARMOR_BIN" remediate --from-audit "$(FIXTURE)"
   [ "$status" -eq 0 ]
+  [[ "$output" == *"applied LAST"* ]]
+}
+
+@test "remediate: pass/skip findings are ignored" {
+  run "$ONIONARMOR_BIN" remediate --from-audit "$(FIXTURE)"
+  [ "$status" -eq 0 ]
+  # The passing ssh ciphers finding and the skipped tor-data-dirs finding must
+  # not be cited as something to remediate.
+  ! [[ "$output" == *"ssh-hardness:ciphers"* ]]
+  ! [[ "$output" == *"tor-data-dirs:perms"* ]]
+}
+
+@test "remediate: categories with no module are reported as unmapped" {
+  run "$ONIONARMOR_BIN" remediate --from-audit "$(FIXTURE)"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"unmapped categories"* ]]
+  [[ "$output" == *"service-inventory"* ]]
+}
+
+@test "remediate: reads the scan from stdin with -" {
+  run bash -c "'$ONIONARMOR_BIN' remediate --from-audit - < '$(FIXTURE)'"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"PLAN"* ]]
+}
+
+@test "remediate: --apply runs modules in dependency order (kernel first, ssh last)" {
+  order="$SANDBOX/order.log"; : > "$order"
+  ONIONARMOR_REMEDIATE_NOOP=yes ONIONARMOR_REMEDIATE_ORDER_LOG="$order" \
+    run "$ONIONARMOR_BIN" remediate --from-audit "$(FIXTURE)" --apply
+  [ "$status" -eq 0 ]
+  # First applied module is kernel-hardening; last is ssh-hardening.
+  [ "$(head -1 "$order")" = "kernel-hardening" ]
+  [ "$(tail -1 "$order")" = "ssh-hardening" ]
+  # firewall-default-deny is applied before ssh-hardening.
+  fw=$(grep -n '^firewall-default-deny$' "$order" | cut -d: -f1)
+  ssh=$(grep -n '^ssh-hardening$' "$order" | cut -d: -f1)
+  [ "$fw" -lt "$ssh" ]
+}
+
+@test "remediate: --apply records audit-log entries" {
+  order="$SANDBOX/order.log"; : > "$order"
+  ONIONARMOR_REMEDIATE_NOOP=yes ONIONARMOR_REMEDIATE_ORDER_LOG="$order" \
+    "$ONIONARMOR_BIN" remediate --from-audit "$(FIXTURE)" --apply >/dev/null
   grep -q 'remediate.start' "$ONIONARMOR_AUDIT_LOG"
-  grep -q 'remediate.module' "$ONIONARMOR_AUDIT_LOG"
+  grep -q 'remediate.apply' "$ONIONARMOR_AUDIT_LOG"
   grep -q 'remediate.done' "$ONIONARMOR_AUDIT_LOG"
 }
 
-@test "remediate: no actionable findings -> nothing to remediate" {
-  printf '{"host":"h","profile":"p","grade":"A","generated":"t","findings":[{"category":"ssh-hardness","name":"ok","status":"pass","severity":"info","detail":"ok","remediation":"none"}]}\n' > "$SB/clean.json"
-  run bash "$ONIONARMOR_BIN" remediate --from-audit "$SB/clean.json"
+@test "remediate: no findings -> nothing to remediate" {
+  empty="$SANDBOX/empty.json"
+  printf '{"host":"h","profile":"relay-mid","grade":"A","aggregate":99,"findings":[]}' > "$empty"
+  run "$ONIONARMOR_BIN" remediate --from-audit "$empty"
   [ "$status" -eq 0 ]
   [[ "$output" == *"nothing to remediate"* ]]
-}
-
-@test "remediate: missing jq is reported clearly" {
-  ONIONARMOR_JQ_CMD="definitely-not-jq-xyz" run bash "$ONIONARMOR_BIN" remediate --from-audit "$FIXTURE"
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"install jq"* ]]
 }

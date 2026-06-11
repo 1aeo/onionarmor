@@ -1,6 +1,5 @@
 #!/usr/bin/env bats
-# mac-profile-install revert.sh — relax (not remove) enforcement; round-trip
-# apply -> audit -> revert -> audit.
+# mac-profile-install revert.sh — relax to permissive; the LSM stays installed.
 
 load test_helper
 
@@ -9,68 +8,78 @@ load test_helper
   [ "$status" -eq 0 ]
 }
 
-@test "revert (debian): sets the tor profile to complain mode" {
-  seed_os_release_debian
-  seed_apparmor_profile
-  set_aa_tor_state enforce
-  run bash "$REVERT"
-  [ "$status" -eq 0 ]
-  grep -q "aa-complain .*usr.bin.tor" "$ACTION_LOG"
-  [ "$(cat "$AA_TOR_STATE")" = "complain" ]
-  [[ "$output" == *"LEFT INSTALLED"* ]]
-}
-
-@test "revert (debian): no tor profile present — warns, exits clean" {
-  seed_os_release_debian
-  run bash "$REVERT"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"nothing to relax"* ]]
-}
-
-@test "revert (rhel): rewrites config to permissive + setenforce 0" {
-  seed_os_release_rhel
-  seed_selinux_config enforcing
-  set_se_runmode enforcing
-  run bash "$REVERT"
-  [ "$status" -eq 0 ]
-  [ "$(config_selinux_mode)" = "permissive" ]
-  grep -q 'setenforce 0' "$ACTION_LOG"
-  [ "$(cat "$SE_RUNMODE")" = "permissive" ]
-  [[ "$output" == *"LEFT INSTALLED"* ]]
-}
-
-@test "round-trip (debian): apply -> audit green -> revert -> audit yellow" {
-  seed_os_release_debian
-  seed_apparmor_profile
+@test "revert (Debian): disables the tor profile, leaves AppArmor installed" {
+  set_debian
+  seed_tor_profile complain
   bash "$APPLY" >/dev/null
-  run bash "$AUDIT"; [ "$status" -eq 0 ]
-  [[ "$output" == *"all green"* ]]
-  bash "$REVERT" >/dev/null
-  run bash "$AUDIT"; [ "$status" -eq 0 ]   # complain mode -> yellow, non-failing
-  [[ "$output" == *"COMPLAIN mode"* ]]
+  [ "$(cat "$AA_PROFILE_STATE")" = "enforce" ]
+  run bash "$REVERT"
+  [ "$status" -eq 0 ]
+  # tor profile flipped to disabled by the aa-disable stub.
+  [ "$(cat "$AA_PROFILE_STATE")" = "disabled" ]
+  # AppArmor itself remains "installed" — aa-status is still available + reports.
+  run "$ONIONARMOR_MAC_AA_STATUS"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"apparmor module is loaded"* ]]
 }
 
-@test "round-trip (rhel): apply -> audit green -> revert -> audit yellow (relaxed)" {
-  seed_os_release_rhel
-  seed_selinux_config permissive
-  set_se_runmode permissive
+@test "revert (Debian): restores the grub backup" {
+  set_debian
+  seed_tor_profile complain
   bash "$APPLY" >/dev/null
-  run bash "$AUDIT"; [ "$status" -eq 0 ]
-  [[ "$output" == *"ENFORCING mode"* ]]
-  bash "$REVERT" >/dev/null
-  # revert relaxes to permissive: SELinux still loaded but no longer blocking ->
-  # yellow (warnings), not a hard red. Audit reflects the relaxed posture.
-  run bash "$AUDIT"; [ "$status" -eq 0 ]
-  [[ "$output" == *"PERMISSIVE mode"* ]]
+  grep -q 'apparmor=1' "$ONIONARMOR_GRUB_FILE"
+  run bash "$REVERT"
+  [ "$status" -eq 0 ]
+  # grub cmdline restored to the pre-apply value (no AppArmor tokens).
+  ! grep -q 'apparmor=1' "$ONIONARMOR_GRUB_FILE"
+  grep -q 'quiet splash' "$ONIONARMOR_GRUB_FILE"
+  [[ "$output" == *"REBOOT REQUIRED"* ]]
 }
 
-@test "revert: writes audit-log entries (rhel)" {
-  seed_os_release_rhel
-  seed_selinux_config enforcing
-  set_se_runmode enforcing
+@test "revert (Debian): emphasises permissive-not-broken and clears state" {
+  set_debian
+  seed_tor_profile complain
+  bash "$APPLY" >/dev/null
+  [ -f "$ONIONARMOR_MAC_STATE_DIR/applied.state" ]
+  run bash "$REVERT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"permissive, not broken"* ]]
+  [[ "$output" == *"left INSTALLED"* ]]
+  [ ! -e "$ONIONARMOR_MAC_STATE_DIR/applied.state" ]
+}
+
+@test "revert (RHEL): sets SELINUX=permissive, leaves SELinux installed" {
+  set_rhel
+  seed_selinux_mode permissive
+  bash "$APPLY" >/dev/null
+  grep -q '^SELINUX=enforcing' "$ONIONARMOR_MAC_SELINUX_CONFIG"
+  run bash "$REVERT"
+  [ "$status" -eq 0 ]
+  grep -q '^SELINUX=permissive' "$ONIONARMOR_MAC_SELINUX_CONFIG"
+  ! grep -q '^SELINUX=enforcing' "$ONIONARMOR_MAC_SELINUX_CONFIG"
+  # sestatus is still available => SELinux left installed.
+  run "$ONIONARMOR_MAC_SESTATUS"
+  [ "$status" -eq 0 ]
+}
+
+@test "revert: ONIONARMOR_SKIP_RELOAD does not invoke aa-disable" {
+  set_debian
+  seed_tor_profile complain
+  bash "$APPLY" >/dev/null
+  [ "$(cat "$AA_PROFILE_STATE")" = "enforce" ]
+  ONIONARMOR_SKIP_RELOAD=yes run bash "$REVERT"
+  [ "$status" -eq 0 ]
+  # aa-disable never ran, so the profile state is unchanged.
+  [ "$(cat "$AA_PROFILE_STATE")" = "enforce" ]
+}
+
+@test "revert (Debian): writes audit-log entries" {
+  set_debian
+  seed_tor_profile complain
+  bash "$APPLY" >/dev/null
   run bash "$REVERT"
   [ "$status" -eq 0 ]
   grep -q 'mac.revert.start' "$ONIONARMOR_AUDIT_LOG"
-  grep -q 'mac.revert.config' "$ONIONARMOR_AUDIT_LOG"
+  grep -q 'mac.revert.profile' "$ONIONARMOR_AUDIT_LOG"
   grep -q 'mac.revert.done' "$ONIONARMOR_AUDIT_LOG"
 }

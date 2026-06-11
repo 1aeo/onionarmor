@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
-# ssh-hardening revert.sh — removes the drop-in, cancels a pending latch,
-# validates + reloads sshd. Plus the apply->audit->revert->audit round trip.
+# ssh-hardening revert.sh — remove the drop-in, cancel the latch, restore host
+# keys, reload sshd. Best-effort + idempotent.
 
 load test_helper
 
@@ -9,52 +9,48 @@ load test_helper
   [ "$status" -eq 0 ]
 }
 
-@test "revert: removes the drop-in and reloads sshd" {
-  bash "$APPLY" --no-safety-latch >/dev/null
+@test "revert: removes the drop-in and cancels the pending latch" {
+  seed_login operator
+  bash "$APPLY" >/dev/null
   [ -f "$DROPIN" ]
-  : > "$SYSTEMCTL_LOG"
+  [ -s "$ATQ_FILE" ]
   run bash "$REVERT"
   [ "$status" -eq 0 ]
   [ ! -e "$DROPIN" ]
-  grep -q "reload ssh" "$SYSTEMCTL_LOG"
-  [[ "$output" == *"reverted."* ]]
+  [ ! -s "$ATQ_FILE" ]
+  [[ "$output" == *"reverted"* ]]
 }
 
-@test "revert: cancels a pending safety latch" {
+@test "revert: restores backed-up weak host keys" {
+  seed_login operator
+  seed_weak_hostkeys
   bash "$APPLY" >/dev/null
-  [ -s "$AT_QUEUE" ]
+  [ ! -e "$ONIONARMOR_SSH_HOSTKEY_DIR/ssh_host_dsa_key" ]
   run bash "$REVERT"
   [ "$status" -eq 0 ]
-  [ ! -f "$LATCH_DIR/jobid" ]
-  [ ! -s "$AT_QUEUE" ]
+  [ -e "$ONIONARMOR_SSH_HOSTKEY_DIR/ssh_host_dsa_key" ]
 }
 
-@test "revert: no drop-in present is a no-op (warns, still succeeds)" {
+@test "revert: reloads sshd after restoring config" {
+  seed_login operator
+  bash "$APPLY" >/dev/null
+  : > "$SYSTEMCTL_LOG"
   run bash "$REVERT"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"nothing to back up"* ]]
+  grep -q "reload ssh" "$SYSTEMCTL_LOG"
+}
+
+@test "revert: is a clean no-op when nothing was applied" {
+  run bash "$REVERT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reverted"* ]]
 }
 
 @test "revert: writes audit-log entries" {
-  bash "$APPLY" --no-safety-latch >/dev/null
+  seed_login operator
+  bash "$APPLY" >/dev/null
   run bash "$REVERT"
   [ "$status" -eq 0 ]
-  grep -q 'sshd.revert.start' "$ONIONARMOR_AUDIT_LOG"
-  grep -q 'sshd.revert.dropin' "$ONIONARMOR_AUDIT_LOG"
-  grep -q 'sshd.revert.done' "$ONIONARMOR_AUDIT_LOG"
-}
-
-@test "round trip: apply -> audit green -> revert -> audit red" {
-  seed_hostkey ssh_host_rsa_key
-  SSHD_RSA_BITS=4096 bash "$APPLY" --no-safety-latch >/dev/null
-  SSHD_RSA_BITS=4096 run bash "$AUDIT"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"all green"* ]]
-
-  run bash "$REVERT"
-  [ "$status" -eq 0 ]
-
-  run bash "$AUDIT"
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"missing"* ]]
+  grep -q 'ssh.revert.start' "$ONIONARMOR_AUDIT_LOG"
+  grep -q 'ssh.revert.done' "$ONIONARMOR_AUDIT_LOG"
 }

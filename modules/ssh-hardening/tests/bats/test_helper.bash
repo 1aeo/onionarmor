@@ -1,12 +1,9 @@
 # Test helper for the ssh-hardening module bats suite.
 #
-# Builds a throwaway sandbox with stub binaries for every external command the
-# module touches (sshd, systemctl, ssh-keygen, at, atrm) so the suite is fully
-# offline, needs no root, and never touches the real host or real sshd. The
-# `at`/`atrm` stubs are copied from the firewall-default-deny suite and wired to
-# the SHARED safety_latch.sh via ONIONARMOR_AT_CMD/ONIONARMOR_ATRM_CMD/
-# ONIONARMOR_LATCH_STATE_DIR. mktemp -d (not $BATS_TEST_TMPDIR) for ubuntu-22.04's
-# older bats.
+# Builds a throwaway sandbox with stub binaries (sshd, ssh-keygen, at, atq,
+# atrm, systemctl, who) so the module's apply/audit/revert run fully offline and
+# never touch the real host or the real sshd. mktemp -d (not $BATS_TEST_TMPDIR)
+# for compatibility with the older bats on ubuntu-22.04.
 
 setup() {
   MOD_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
@@ -15,143 +12,163 @@ setup() {
   export REPO_ROOT
   export ONIONARMOR_PREFIX="$REPO_ROOT"
 
-  APPLY="$MOD_ROOT/apply.sh"
-  AUDIT="$MOD_ROOT/audit.sh"
-  REVERT="$MOD_ROOT/revert.sh"
+  APPLY="$MOD_ROOT/apply.sh"; AUDIT="$MOD_ROOT/audit.sh"; REVERT="$MOD_ROOT/revert.sh"
   export APPLY AUDIT REVERT
 
-  SB="$(mktemp -d)"
-  export SB
-  STUB="$SB/stubs"
-  export STUB
+  SB="$(mktemp -d)"; export SB
+  STUB="$SB/stubs"; export STUB
   mkdir -p "$STUB"
 
-  # --- sandbox paths the module reads/manages ---
-  export ONIONARMOR_SSHD_DROPIN_DIR="$SB/etc/ssh/sshd_config.d"
-  export ONIONARMOR_SSHD_HOSTKEY_DIR="$SB/etc/ssh"
-  export ONIONARMOR_SSHD_STATE_DIR="$SB/var/lib/onionarmor/ssh-hardening"
-  export ONIONARMOR_LATCH_STATE_DIR="$SB/var/lib/onionarmor/latch"
+  # --- sandbox paths the module manages ---
+  export ONIONARMOR_SSH_CONFD_DIR="$SB/etc/ssh/sshd_config.d"
+  export ONIONARMOR_SSH_SSHD_CONFIG="$SB/etc/ssh/sshd_config"
+  export ONIONARMOR_SSH_HOSTKEY_DIR="$SB/etc/ssh"
+  export ONIONARMOR_SSH_STATE_DIR="$SB/var/lib/onionarmor/ssh-hardening"
   export ONIONARMOR_AUDIT_LOG="$SB/var/log/onionarmor/audit.log"
   export ONIONARMOR_OPERATOR="bats-test"
-  export ONIONARMOR_SSHD_DROPIN_NAME="99-onionarmor-hardening.conf"
-  export DROPIN="$ONIONARMOR_SSHD_DROPIN_DIR/$ONIONARMOR_SSHD_DROPIN_NAME"
-  export LATCH_DIR="$ONIONARMOR_LATCH_STATE_DIR/ssh-hardening"
-  mkdir -p "$ONIONARMOR_SSHD_DROPIN_DIR" "$ONIONARMOR_SSHD_HOSTKEY_DIR"
+  export ONIONARMOR_SSH_UNIT="ssh"
+  : "${ONIONARMOR_SSH_DROPIN_NAME:=99-onionarmor-hardening.conf}"
+  export ONIONARMOR_SSH_DROPIN_NAME
+  export DROPIN="$ONIONARMOR_SSH_CONFD_DIR/$ONIONARMOR_SSH_DROPIN_NAME"
 
-  # Shorten the latch window so nothing real lingers (also exercises the flag path).
-  export ONIONARMOR_LATCH_TIMEOUT_MIN=5
+  mkdir -p "$ONIONARMOR_SSH_CONFD_DIR" "$ONIONARMOR_SSH_HOSTKEY_DIR" \
+           "$(dirname "$ONIONARMOR_AUDIT_LOG")"
+  : > "$ONIONARMOR_SSH_SSHD_CONFIG"
 
-  # at queue + counter (copied from the firewall suite).
-  export AT_QUEUE="$SB/at-queue"
+  # Stub-state files.
+  export SSHD_INVALID="$SB/sshd-invalid"        # presence => `sshd -t` fails
+  export RSA_BITS_FILE="$SB/rsa-bits"            # current RSA host-key size
+  export WHO_USERS="$SB/who-users"              # logged-in users (one per line)
+  export ATQ_FILE="$SB/atq"                     # pending at jobs
   export AT_COUNTER="$SB/at-counter"
-  : > "$AT_QUEUE"
-  printf '0\n' > "$AT_COUNTER"
-
-  # ssh-keygen knobs: reported RSA bit count for `-lf`, and a log of regen calls.
-  export SSHD_RSA_BITS=4096
-  export KEYGEN_LOG="$SB/keygen.log"
-  : > "$KEYGEN_LOG"
-  # systemctl reload log; sshd -t exit code knob.
   export SYSTEMCTL_LOG="$SB/systemctl.log"
-  : > "$SYSTEMCTL_LOG"
-  export SSHD_T_RC=0
+  : > "$ATQ_FILE"; : > "$WHO_USERS"; : > "$SYSTEMCTL_LOG"; printf '6\n' > "$AT_COUNTER"
 
   _build_stubs
-
-  export ONIONARMOR_SSHD_SSHD_CMD="$STUB/sshd"
-  export ONIONARMOR_SSHD_SYSTEMCTL="$STUB/systemctl"
-  export ONIONARMOR_SSHD_KEYGEN_CMD="$STUB/ssh-keygen"
-  export ONIONARMOR_AT_CMD="$STUB/at"
-  export ONIONARMOR_ATRM_CMD="$STUB/atrm"
+  export ONIONARMOR_SSH_SSHD="$STUB/sshd"
+  export ONIONARMOR_SSH_KEYGEN="$STUB/ssh-keygen"
+  export ONIONARMOR_SSH_AT="$STUB/at"
+  export ONIONARMOR_SSH_ATQ="$STUB/atq"
+  export ONIONARMOR_SSH_ATRM="$STUB/atrm"
+  export ONIONARMOR_SSH_SYSTEMCTL="$STUB/systemctl"
+  export ONIONARMOR_SSH_WHO="$STUB/who"
 }
 
 teardown() {
   if [ -n "${SB:-}" ] && [ -d "$SB" ]; then rm -rf "$SB"; fi
 }
 
-# seed_hostkey <stem>: create a fake host-key pair (private + .pub).
-seed_hostkey() {
-  printf 'PRIV %s\n' "$1" > "$ONIONARMOR_SSHD_HOSTKEY_DIR/$1"
-  printf 'PUB %s\n' "$1"  > "$ONIONARMOR_SSHD_HOSTKEY_DIR/$1.pub"
+# seed_login <user...> : mark these users as currently logged in (for AllowUsers).
+seed_login() { printf '%s\n' "$@" > "$WHO_USERS"; }
+
+# seed_rsa <bits> : create an RSA host key reporting <bits> via ssh-keygen -lf.
+seed_rsa() {
+  printf '%s\n' "$1" > "$RSA_BITS_FILE"
+  printf 'PRIVATE\n' > "$ONIONARMOR_SSH_HOSTKEY_DIR/ssh_host_rsa_key"
+  printf 'ssh-rsa AAAA fake\n' > "$ONIONARMOR_SSH_HOSTKEY_DIR/ssh_host_rsa_key.pub"
 }
 
-# latch_jobid: echo the recorded latch at-job id, if armed.
-latch_jobid() { cat "$LATCH_DIR/jobid" 2>/dev/null || true; }
+# seed_weak_hostkeys : create DSA + ECDSA host keys the module should remove.
+seed_weak_hostkeys() {
+  for t in dsa ecdsa; do
+    printf 'PRIVATE\n' > "$ONIONARMOR_SSH_HOSTKEY_DIR/ssh_host_${t}_key"
+    printf 'ssh-%s AAAA fake\n' "$t" > "$ONIONARMOR_SSH_HOSTKEY_DIR/ssh_host_${t}_key.pub"
+  done
+}
+
+# force_sshd_invalid : make the next `sshd -t` fail.
+force_sshd_invalid() { : > "$SSHD_INVALID"; }
+clear_sshd_invalid() { rm -f "$SSHD_INVALID"; }
+
+dropin_has() { grep -qiE "$1" "$DROPIN"; }
 
 _build_stubs() {
-  # sshd: `-t` validates (exit code from SSHD_T_RC). Anything else is a no-op.
   cat > "$STUB/sshd" <<'EOF'
 #!/bin/sh
-case "$1" in
-  -t) exit "${SSHD_T_RC:-0}" ;;
-esac
+# `sshd -t` succeeds unless the sentinel file exists.
+if [ -f "${SSHD_INVALID:-/nonexistent}" ]; then
+  echo "sshd: stub: forced invalid config" >&2
+  exit 255
+fi
 exit 0
 EOF
 
-  # systemctl: record reload/restart invocations for assertions.
-  cat > "$STUB/systemctl" <<'EOF'
-#!/bin/sh
-printf '%s\n' "$*" >> "${SYSTEMCTL_LOG:-/dev/null}"
-exit 0
-EOF
-
-  # ssh-keygen:
-  #   -lf <file>  -> print "<bits> SHA256:... comment (RSA)" using SSHD_RSA_BITS.
-  #   -t rsa ...  -> "regenerate": log the call + create the key files.
   cat > "$STUB/ssh-keygen" <<'EOF'
 #!/bin/sh
-LOG="${KEYGEN_LOG:-/dev/null}"
-mode=""
-keyfile=""
-prev=""
-for a in "$@"; do
-  case "$prev" in
-    -f) keyfile=$a ;;
+# -lf <pub> : print "<bits> SHA256:... (RSA)" using the sandbox RSA_BITS_FILE.
+# -t rsa -b <bits> -f <path> : (re)generate a key + record the new bit size.
+mode=""; bits=""; outfile=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -l) mode=fingerprint ;;
+    -f) outfile=$2; shift ;;
+    -b) bits=$2; shift ;;
+    -lf) mode=fingerprint; outfile=$2; shift ;;
+    *) : ;;
   esac
-  case "$a" in
-    -lf) mode=fingerprint ;;
-    -t)  mode=generate ;;
-  esac
-  prev=$a
+  shift
 done
-# -lf takes the file as the very next token after -lf.
 if [ "$mode" = fingerprint ]; then
-  f=""
-  prev=""
-  for a in "$@"; do
-    [ "$prev" = "-lf" ] && f=$a
-    prev=$a
-  done
-  printf '%s SHA256:AAAA test@onionarmor (RSA)\n' "${SSHD_RSA_BITS:-4096}"
+  b=$(cat "${RSA_BITS_FILE:-/nonexistent}" 2>/dev/null || echo 2048)
+  echo "$b SHA256:AAAAfakefingerprint stub (RSA)"
   exit 0
 fi
-if [ "$mode" = generate ]; then
-  printf 'generate %s\n' "$*" >> "$LOG"
-  [ -n "$keyfile" ] && { printf 'PRIV regen\n' > "$keyfile"; printf 'PUB regen\n' > "$keyfile.pub"; }
-  exit 0
+# generate
+if [ -n "$outfile" ]; then
+  printf 'PRIVATE\n' > "$outfile"
+  printf 'ssh-rsa AAAA regen\n' > "$outfile.pub"
+  [ -n "$bits" ] && printf '%s\n' "$bits" > "${RSA_BITS_FILE:-/dev/null}"
 fi
 exit 0
 EOF
 
-  # at: enqueue a job id, print "job N at <when>" (firewall suite shape).
   cat > "$STUB/at" <<'EOF'
 #!/bin/sh
+# Consume the command on stdin, allocate a job id, record it in ATQ_FILE, and
+# print "job <n> at <when>" the way real `at` does (to stderr).
 cat >/dev/null
-n=$(cat "${AT_COUNTER:?}" 2>/dev/null || echo 0)
-n=$((n + 1))
-printf '%s\n' "$n" > "$AT_COUNTER"
-printf '%s\n' "$n" >> "${AT_QUEUE:?}"
-echo "warning: commands will be executed using /bin/sh" >&2
-echo "job $n at Mon Jun  8 03:00:00 2026" >&2
+n=$(cat "${AT_COUNTER:?}" 2>/dev/null || echo 6)
+n=$((n + 1)); printf '%s\n' "$n" > "$AT_COUNTER"
+printf '%s\n' "$n" >> "${ATQ_FILE:?}"
+echo "job $n at Thu Jan  1 00:00:00 2026" >&2
 exit 0
 EOF
 
-  # atrm: remove a job id from the queue.
+  cat > "$STUB/atq" <<'EOF'
+#!/bin/sh
+# Print one "<job> <when>" line per pending job.
+while IFS= read -r j; do
+  [ -n "$j" ] && echo "$j Thu Jan  1 00:00:00 2026 a operator"
+done < "${ATQ_FILE:?}"
+exit 0
+EOF
+
   cat > "$STUB/atrm" <<'EOF'
 #!/bin/sh
-q="${AT_QUEUE:?}"; tmp="$q.tmp"
-grep -vx "$1" "$q" > "$tmp" 2>/dev/null || :
-mv "$tmp" "$q"
+# Remove the given job id(s) from ATQ_FILE.
+tmp="${ATQ_FILE:?}.tmp.$$"
+: > "$tmp"
+while IFS= read -r j; do
+  keep=1
+  for victim in "$@"; do [ "$j" = "$victim" ] && keep=0; done
+  [ "$keep" = 1 ] && [ -n "$j" ] && echo "$j" >> "$tmp"
+done < "$ATQ_FILE"
+mv "$tmp" "$ATQ_FILE"
+exit 0
+EOF
+
+  cat > "$STUB/systemctl" <<'EOF'
+#!/bin/sh
+echo "$*" >> "${SYSTEMCTL_LOG:?}"
+exit 0
+EOF
+
+  cat > "$STUB/who" <<'EOF'
+#!/bin/sh
+# Emulate `who`: "<user> tty ..." lines from WHO_USERS.
+while IFS= read -r u; do
+  [ -n "$u" ] && echo "$u pts/0 2026-01-01 00:00 (198.51.100.10)"
+done < "${WHO_USERS:?}"
 exit 0
 EOF
 

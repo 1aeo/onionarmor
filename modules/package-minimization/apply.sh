@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# MODULE: package minimization — purge build/debug/network-analysis tools (gcc/gdb/tcpdump/strace/...) that aid post-exploitation. Low risk; recommended-off; needs --confirm.
+# MODULE: package minimization — remove the build toolchain + debug tooling (gcc/make/cmake, tcpdump/nc, strace/gdb, python3-dev) from a production relay; reversible via reinstall.
 #
-# apply.sh — remove the configured set of build/debug/network-analysis packages
-# that are currently installed. Idempotent; supports --dry-run. REFUSES to remove
-# anything without --confirm (so packages can never be stripped silently), and
-# SKIPS entirely on a build-host role.
+# apply.sh — remove the target build/debug toolchain from a production relay to
+# shrink the attack surface. Records the removed set for revert. Idempotent;
+# --dry-run plans only; prompts before removing (destructive-ish). Skipped on
+# build-host / ci roles, which legitimately need a toolchain.
 
 set -euo pipefail
 
@@ -12,120 +12,138 @@ _here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib.sh
 . "$_here/lib.sh"
 
-pkg_parse_flags "$@"
+pm_parse_flags "$@"
 
-present=$(pkg_present_list)
-present_count=$(printf '%s\n' "$present" | grep -c . || true)
-reclaim_kib=$(printf '%s\n' "$present" | pkg_reclaim_kib)
+role=$(pm_role)
+role_label=${role:-unset}
 
 # ---------------------------------------------------------------------------
-# Dry run: list the present removable packages + the reclaimable space, change
-# nothing. Exit 0.
+# Role gating: build-host / ci legitimately need a toolchain — SKIP cleanly.
 # ---------------------------------------------------------------------------
-if [ "$PKG_DRY_RUN" -eq 1 ]; then
-  info "dry-run: package-minimization (no host changes)"
-  skip=$(pkg_skip_role)
-  cat <<EOF
+if pm_role_is_skip "$role"; then
+  audit_log pm.apply.skip "role=$role_label reason=toolchain-required"
+  info "package-minimization: role=$role_label legitimately needs a toolchain — skipping (no packages removed)"
+  exit 0
+fi
 
-PLAN
-  removable set      -> $(pkg_remove_list | tr '\n' ' ')
-  purge command      -> $ONIONARMOR_PKG_APT purge -y <present pkgs>
-  role skip ($ONIONARMOR_PKG_SKIP_ROLE) -> $([ -n "$skip" ] && echo "YES — would skip" || echo "no")
+audit_log pm.apply.start "role=$role_label packages=$(printf '%s' "$ONIONARMOR_PM_PACKAGES" | tr -s ' ')"
 
-PRESENT (installed; would be purged)
+# ---------------------------------------------------------------------------
+# Compute the removable set (installed TARGET packages) + total bytes saved.
+# ---------------------------------------------------------------------------
+installed=$(pm_installed_targets)
+
+if [ -z "$installed" ]; then
+  info "package-minimization: none of the target build/debug packages are installed — nothing to remove (role=$role_label)"
+  audit_log pm.apply.done "removed=0 role=$role_label"
+  printf '\n[package-minimization] nothing to remove (role=%s).\n' "$role_label"
+  exit 0
+fi
+
+pkgs=""
+total_kib=0
+while IFS=' ' read -r pkg sz; do
+  [ -n "$pkg" ] || continue
+  pkgs="$pkgs $pkg"
+  total_kib=$((total_kib + sz))
+done <<EOF
+$installed
 EOF
-  if [ "$present_count" -eq 0 ]; then
-    printf '  (none — nothing to remove)\n'
-  else
-    printf '%s\n' "$present" | while read -r p; do
-      [ -n "$p" ] || continue
-      printf '  %-22s %s\n' "$p" "$(pkg_human_kib "$(pkg_installed_size_kib "$p")")"
-    done
-  fi
-  printf '\nReclaimable: %s across %s package(s)\n' "$(pkg_human_kib "$reclaim_kib")" "$present_count"
-  exit 0
-fi
+pkgs=$(printf '%s' "$pkgs" | tr -s ' ' | sed 's/^ *//;s/ *$//')
 
 # ---------------------------------------------------------------------------
-# Role skip: a build host legitimately needs toolchains — never strip them.
+# Dry run: print the plan, change nothing.
 # ---------------------------------------------------------------------------
-skip=$(pkg_skip_role)
-if [ -n "$skip" ]; then
-  audit_log pkg.apply.skip "role=$skip"
-  info "host role is '$skip' — skipping package removal (a build host needs these toolchains)"
-  exit 0
-fi
-
-# ---------------------------------------------------------------------------
-# Confirmation gate: refuse to remove anything without --confirm (or an
-# operator yes via oa_confirm). This is what makes a bare apply safe.
-# ---------------------------------------------------------------------------
-if [ "$PKG_CONFIRM" -ne 1 ]; then
-  if [ "$present_count" -eq 0 ]; then
-    info "no removable packages installed — nothing to do"
-    exit 0
-  fi
-  warn "package-minimization removes: $(printf '%s\n' "$present" | tr '\n' ' ')"
-  if ! oa_confirm "Purge the ${present_count} package(s) above? This is destructive (re-add later with apt-get install)."; then
-    audit_log pkg.apply.refused "present=$present_count confirm=no"
-    die "refusing to remove packages without --confirm (or a 'yes' confirmation). Re-run with --confirm, or --dry-run to preview."
-  fi
-fi
-
-audit_log pkg.apply.start "present=$present_count reclaim_kib=$reclaim_kib"
-
-# ---------------------------------------------------------------------------
-# Nothing installed -> idempotent no-op.
-# ---------------------------------------------------------------------------
-if [ "$present_count" -eq 0 ]; then
-  info "no removable packages installed — nothing to do"
-  audit_log pkg.apply.done "removed=0"
-  cat <<EOF
-
-[package-minimization] applied.
-  removed : 0 package(s) — host already minimal
-
-Check status any time:  onionarmor audit  --module package-minimization
+if [ "$PM_DRY_RUN" -eq 1 ]; then
+  info "dry-run: package-minimization (no host changes, role=$role_label)"
+  printf '\nPLAN (apt-get remove)\n'
+  printf '  role             -> %s\n' "$role_label"
+  while IFS=' ' read -r pkg sz; do
+    [ -n "$pkg" ] || continue
+    printf '  remove %-20s %s\n' "$pkg" "$(pm_human_kib "$sz")"
+  done <<EOF
+$installed
 EOF
+  printf '  ----\n'
+  printf '  total reclaimable -> %s\n' "$(pm_human_kib "$total_kib")"
   exit 0
 fi
 
 # ---------------------------------------------------------------------------
-# Purge the present removable packages, then record exactly what we removed so
-# revert can print the reinstall command. We pass the whole present set in one
-# apt-get purge invocation.
+# Confirm before removing (destructive-ish). --yes / ONIONARMOR_AUTO_CONFIRM=yes
+# skip the prompt; a default-no answer aborts cleanly.
 # ---------------------------------------------------------------------------
-# shellcheck disable=SC2046  # intentional word-split: pass each pkg as a separate arg
-set -- $(printf '%s\n' "$present" | tr '\n' ' ')
-if DEBIAN_FRONTEND=noninteractive "$ONIONARMOR_PKG_APT" purge -y "$@"; then
-  info "purged: $*"
+if [ "$PM_ASSUME_YES" -eq 1 ]; then
+  export ONIONARMOR_AUTO_CONFIRM=yes
+fi
+if ! oa_confirm "package-minimization: remove ${pkgs} (reclaim $(pm_human_kib "$total_kib"))?"; then
+  audit_log pm.apply.cancel "role=$role_label packages=$pkgs"
+  die "package-minimization: cancelled (no packages removed)"
+fi
+
+# ---------------------------------------------------------------------------
+# Remove via a single apt-get call. Honour ONIONARMOR_SKIP_RELOAD=yes to mean
+# "compute/plan only, do not actually invoke apt".
+# ---------------------------------------------------------------------------
+mkdir -p "$ONIONARMOR_PM_STATE_DIR" || die "cannot create state dir $ONIONARMOR_PM_STATE_DIR"
+removed_path=$(pm_removed_path)
+
+if [ "${ONIONARMOR_SKIP_RELOAD:-}" = "yes" ]; then
+  info "ONIONARMOR_SKIP_RELOAD=yes: not invoking apt — recording the planned removal set only"
 else
-  audit_fail_die pkg.apply.fail "stage=purge" "apt-get purge failed for: $*"
+  # shellcheck disable=SC2086  # $pkgs is a deliberate multi-package arg list
+  "$ONIONARMOR_PM_APT" remove -y $pkgs \
+    || { audit_log pm.apply.fail "stage=remove packages=$pkgs"; die "apt-get remove failed for: $pkgs"; }
+fi
+audit_log pm.apply.remove "packages=$pkgs saved_kib=$total_kib skip_reload=${ONIONARMOR_SKIP_RELOAD:-no}"
+
+# ---------------------------------------------------------------------------
+# Record the removed set to removed.list (merge with any prior set, deduped).
+# ---------------------------------------------------------------------------
+merged=$pkgs
+if [ -f "$removed_path" ]; then
+  merged=$(printf '%s\n%s\n' "$(tr ' ' '\n' < "$removed_path")" "$(printf '%s' "$pkgs" | tr ' ' '\n')" \
+           | sed '/^$/d' | sort -u | tr '\n' ' ' | sed 's/ *$//')
+fi
+tmp="$removed_path.tmp.$$"
+if printf '%s\n' "$merged" > "$tmp" 2>/dev/null && mv "$tmp" "$removed_path" 2>/dev/null; then
+  audit_log pm.apply.record "path=$removed_path set=$merged"
+else
+  rm -f "$tmp" 2>/dev/null || true
+  warn "could not record removed set to $removed_path — revert will not know to reinstall these"
 fi
 
-mkdir -p "$ONIONARMOR_PKG_STATE_DIR" || die "cannot create $ONIONARMOR_PKG_STATE_DIR"
-state=$(pkg_state_file)
-# Append (de-duplicated) so repeated applies accumulate the full removal history
-# that revert reinstalls from.
-{
-  [ -f "$state" ] && cat "$state"
-  printf '%s\n' "$present"
-} | sort -u | grep . > "$state.tmp.$$" || true
-mv "$state.tmp.$$" "$state" || { rm -f "$state.tmp.$$"; die "cannot write $state"; }
-audit_log pkg.apply.removed "pkgs=$* state=$state"
+# ---------------------------------------------------------------------------
+# Verify (default on): re-query each removed package is gone. Skipped (with the
+# live kernel untouched) under SKIP_RELOAD, where nothing was actually removed.
+# ---------------------------------------------------------------------------
+verify_failed=0
+survivors=""
+if [ "$PM_VERIFY" -eq 1 ] && [ "${ONIONARMOR_SKIP_RELOAD:-}" != "yes" ]; then
+  for pkg in $pkgs; do
+    if pm_pkg_installed "$pkg"; then
+      survivors="$survivors $pkg"
+      verify_failed=1
+    fi
+  done
+  if [ "$verify_failed" -eq 1 ]; then
+    survivors=$(printf '%s' "$survivors" | sed 's/^ *//')
+    warn "verify: package(s) still installed after removal: $survivors"
+  else
+    info "verify: all target packages removed"
+  fi
+fi
 
-removed_count=$present_count
-audit_log pkg.apply.done "removed=$removed_count reclaim_kib=$reclaim_kib"
+audit_log pm.apply.done "removed=$(printf '%s' "$pkgs" | wc -w | tr -d ' ') saved_kib=$total_kib verify_failed=$verify_failed role=$role_label"
 
 cat <<EOF
 
 [package-minimization] applied.
-  removed : $removed_count package(s) — $*
-  reclaimed (est.) : $(pkg_human_kib "$reclaim_kib")
-  recorded : $state
-
-NOTE: removal is NOT auto-reversible. To reinstall later:
-  onionarmor revert --module package-minimization   (prints the exact apt-get install command)
-
-Check status any time:  onionarmor audit  --module package-minimization
+  role        : $role_label
+  removed     : $pkgs
+  reclaimed   : $(pm_human_kib "$total_kib")
+  removed.list: $removed_path
 EOF
+printf '\nReinstall on demand:  onionarmor revert --module package-minimization\n'
+
+[ "$verify_failed" -eq 0 ] || { warn "apply finished but verification reported survivors above"; exit 2; }

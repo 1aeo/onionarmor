@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# MODULE: kernel hardening — KSPP recommended sysctls (dmesg/kptr/bpf/perf/ASLR/ptrace/kexec + net anti-spoofing). Very low risk; recommended-on.
+# MODULE: Kernel hardening — write & load the KSPP-recommended sysctl hardening drop-in (default-on, low-risk).
 #
-# apply.sh — write the KSPP sysctl set to 99-onionarmor-kernel-hardening.conf and
-# load it with `sysctl --system`. Idempotent; supports --dry-run.
+# apply.sh — render the KSPP kernel-hardening sysctl drop-in, back up any
+# existing one, write it atomically, and load it via `sysctl --system`.
+# Idempotent; supports --dry-run and post-apply verification.
 
 set -euo pipefail
 
@@ -13,11 +14,24 @@ _here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 kh_parse_flags "$@"
 
 dropin=$(kh_dropin_path)
+backup=$(kh_backup_path)
 rendered=$(kh_render_dropin)
 
 # ---------------------------------------------------------------------------
-# Dry run: print the plan + rendered drop-in + before/after per key, change
-# nothing.
+# kh_live_matches: return 0 iff every key's live value already equals desired.
+# Used to short-circuit a reload when nothing would change.
+# ---------------------------------------------------------------------------
+kh_live_matches() {
+  local key want live
+  while read -r key want; do
+    live=$(kh_sysctl_runtime "$key")
+    [ "$(kh_normalise "$live")" = "$(kh_normalise "$want")" ] || return 1
+  done < <(kh_each_key)
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# Dry run: print the plan + rendered drop-in + before(live)/after, change nothing.
 # ---------------------------------------------------------------------------
 if [ "$KH_DRY_RUN" -eq 1 ]; then
   info "dry-run: kernel-hardening (no host changes)"
@@ -25,45 +39,67 @@ if [ "$KH_DRY_RUN" -eq 1 ]; then
 
 PLAN
   drop-in           -> $dropin
+  keys              -> $(kh_each_key | grep -c .) KSPP sysctls
   planned command   -> $ONIONARMOR_SYSCTL_CMD --system
 
-SYSCTL (before -> target)
+SYSCTL (before live / after desired)
 EOF
-  printf '%s\n' "$KH_TARGETS" | while read -r key val; do
-    [ -n "$key" ] || continue
-    before=$(kh_sysctl_runtime "$key" | tr '\t' ' ')
-    printf '  %-42s %-14s -> %s\n' "$key" "${before:-<unset>}" "$val"
-  done
-  printf '\n--- drop-in (%s) ---\n%s\n' "$dropin" "$rendered"
+  printf "$_OA_FMT_SYSCTL_ROW" "KEY" "CURRENT" "TARGET" "STATUS"
+  printf "$_OA_FMT_SYSCTL_ROW" "$_OA_DASH_SYSCTL_ROW" "$_OA_DASH_SYSCTL_COL" "$_OA_DASH_SYSCTL_COL" "------"
+  while read -r key want; do
+    live=$(kh_sysctl_runtime "$key")
+    if [ "$(kh_normalise "$live")" = "$(kh_normalise "$want")" ]; then
+      st="ok"
+    else
+      st="change"
+    fi
+    printf "$_OA_FMT_SYSCTL_ROW" "$key" "${live:-<empty>}" "$want" "$st"
+  done < <(kh_each_key)
+  cat <<EOF
+
+--- drop-in ($dropin) ---
+$rendered
+EOF
   exit 0
 fi
 
-audit_log kh.apply.start "dropin=$dropin"
+audit_log kh.apply.start "dropin=$dropin verify=$KH_VERIFY"
 
 # ---------------------------------------------------------------------------
-# 1. Write the managed drop-in (idempotent: skip if byte-identical). Back up the
-#    previous managed drop-in first so revert can restore it.
+# Idempotence: if the drop-in already byte-matches AND (when verifying) the live
+# values already match, there is nothing to do — skip the reload entirely.
 # ---------------------------------------------------------------------------
-mkdir -p "$ONIONARMOR_SYSCTL_DIR" || die "cannot create $ONIONARMOR_SYSCTL_DIR"
 if [ -f "$dropin" ] && [ "$(cat "$dropin")" = "$rendered" ]; then
-  info "drop-in already current: $dropin"
-  wrote=0
-else
-  if [ -f "$dropin" ]; then
-    mkdir -p "$ONIONARMOR_KH_STATE_DIR" || die "cannot create $ONIONARMOR_KH_STATE_DIR"
-    cp -p "$dropin" "$(kh_backup_path)" \
-      || audit_fail_die kh.apply.fail "stage=backup" "failed to back up $dropin"
+  if [ "$KH_VERIFY" -eq 0 ] || [ "${ONIONARMOR_SKIP_RELOAD:-}" = "yes" ] || kh_live_matches; then
+    audit_log kh.apply.done "already-current=1"
+    info "kernel-hardening already current: $dropin"
+    exit 0
   fi
-  tmp="$dropin.tmp.$$"
-  printf '%s\n' "$rendered" > "$tmp" || die "cannot write $tmp"
-  mv "$tmp" "$dropin" || { rm -f "$tmp"; die "cannot move $tmp -> $dropin"; }
-  audit_log kh.apply.dropin "wrote=$dropin"
-  info "wrote drop-in: $dropin"
-  wrote=1
 fi
 
 # ---------------------------------------------------------------------------
-# 2. Load it into the running kernel.
+# 1. Back up any existing drop-in before overwriting it.
+# ---------------------------------------------------------------------------
+if [ -f "$dropin" ]; then
+  mkdir -p "$ONIONARMOR_KH_STATE_DIR" || die "cannot create $ONIONARMOR_KH_STATE_DIR"
+  cp -p "$dropin" "$backup" \
+    || audit_fail_die kh.apply.fail "stage=backup" "failed to back up $dropin -> $backup"
+  info "backed up existing drop-in -> $backup"
+fi
+
+# ---------------------------------------------------------------------------
+# 2. Write the managed drop-in (atomic; skip rewrite if byte-identical).
+# ---------------------------------------------------------------------------
+mkdir -p "$ONIONARMOR_SYSCTL_DIR" || die "cannot create $ONIONARMOR_SYSCTL_DIR"
+if oa_write_if_changed "$dropin" "$rendered"; then
+  audit_log kh.apply.dropin "wrote=$dropin keys=$(kh_each_key | grep -c .)"
+  info "wrote drop-in: $dropin"
+else
+  info "drop-in already current: $dropin"
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Load it into the running kernel.
 # ---------------------------------------------------------------------------
 reload_failed=0
 if [ "${ONIONARMOR_SKIP_RELOAD:-}" = "yes" ]; then
@@ -71,54 +107,48 @@ if [ "${ONIONARMOR_SKIP_RELOAD:-}" = "yes" ]; then
 elif "$ONIONARMOR_SYSCTL_CMD" --system >/dev/null 2>&1; then
   info "applied via $ONIONARMOR_SYSCTL_CMD --system"
 else
-  warn "$ONIONARMOR_SYSCTL_CMD --system returned nonzero; drop-in written but some keys may not be live"
+  warn "$ONIONARMOR_SYSCTL_CMD --system returned nonzero; drop-in written but keys may not all be live"
   reload_failed=1
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Verify (default on): every managed key's live value matches the target.
-#    Verification is AUTHORITATIVE: a noisy `sysctl --system` (e.g. an unrelated
-#    drop-in failed) does not fail the apply if our keys all match. Only when
-#    verification is skipped does the reload exit code become the signal.
+# 4. Verify (default on): each live sysctl value matches the KSPP target.
+#
+# Verification, when it runs, is AUTHORITATIVE: if every live value matches the
+# drop-in, the apply succeeded — even if `sysctl --system` returned nonzero (it
+# can fail over an unrelated drop-in while still loading ours). Only when
+# verification is disabled does the reload exit code become the success signal,
+# so a silent reload failure still fails the apply.
 # ---------------------------------------------------------------------------
 verify_failed=0
-mismatches=""
 if [ "$KH_VERIFY" -eq 1 ] && [ "${ONIONARMOR_SKIP_RELOAD:-}" != "yes" ]; then
-  while read -r key val; do
-    [ -n "$key" ] || continue
+  while read -r key want; do
     live=$(kh_sysctl_runtime "$key")
-    if [ "$(kh_norm "$live")" = "$(kh_norm "$val")" ]; then
-      continue
-    fi
-    # An unreadable key (module/sysctl absent on this kernel) is a warning, not a
-    # hard failure — some keys (e.g. kexec_load_disabled) may not exist on older
-    # kernels. A readable-but-wrong value is a real verify failure.
-    if [ -z "$live" ]; then
-      warn "verify: $key is not readable on this kernel (skipping)"
+    if [ "$(kh_normalise "$live")" = "$(kh_normalise "$want")" ]; then
+      info "verify: $key = $live"
+    elif [ -z "$live" ]; then
+      warn "verify: $key is unreadable on this kernel (skipping)"
     else
-      warn "verify: $key is '$live', expected '$val'"
-      mismatches="$mismatches $key"
-      verify_failed=1
+      warn "verify: $key is '$live', expected '$want'"; verify_failed=1
     fi
-  done <<EOF
-$KH_TARGETS
-EOF
-  [ "$verify_failed" -eq 0 ] && info "verify: all readable KSPP keys match the drop-in"
+  done < <(kh_each_key)
 elif [ "$reload_failed" -eq 1 ]; then
-  warn "verify skipped; treating the nonzero sysctl --system as a failure"
+  # No verification ran (disabled) — the reload status is all we have.
+  warn "verify disabled; treating the nonzero sysctl --system as a failure"
   verify_failed=1
 fi
 
-audit_log kh.apply.done "wrote=$wrote verify_failed=$verify_failed mismatches=${mismatches:-none}"
+audit_log kh.apply.done "verify_failed=$verify_failed"
 
 cat <<EOF
 
 [kernel-hardening] applied.
   drop-in : $dropin
-  sysctls : $(printf '%s\n' "$KH_TARGETS" | grep -c .) KSPP keys
+  keys    : $(kh_each_key | grep -c .) KSPP sysctls
+  source  : https://kspp.github.io/Recommended_Settings
 
 Check status any time:  onionarmor audit  --module kernel-hardening
-Undo the posture:       onionarmor revert --module kernel-hardening
+Undo the hardening:     onionarmor revert --module kernel-hardening
 EOF
 
 [ "$verify_failed" -eq 0 ] || { warn "apply finished but verification reported problems above"; exit 2; }

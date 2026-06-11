@@ -1,10 +1,12 @@
 # Test helper for the kernel-hardening module bats suite.
 #
-# Builds a throwaway sandbox with a stub `sysctl` that emulates kernel sysctl
-# state through a flat key=value file. `--system` loads our drop-in's keys into
-# that state; `-n KEY` reads it; `-w KEY=VAL` sets it. Fully offline; never
-# touches the real host. mktemp -d (not $BATS_TEST_TMPDIR) for ubuntu-22.04's
-# older bats.
+# Builds a throwaway sandbox: a stub `sysctl` that emulates the kernel's
+# per-key runtime state through a fake state dir. `--system` loads the managed
+# keys from the drop-in into that state; `-w key=val` sets one key; `-n key`
+# prints a key (defaulting to a "wrong" pre-hardening value for keys not yet
+# loaded, so drift is visible before apply). Fully offline; never touches the
+# real host. We use mktemp -d (not $BATS_TEST_TMPDIR) for compatibility with the
+# older bats packaged on ubuntu-22.04.
 
 setup() {
   MOD_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
@@ -29,17 +31,20 @@ setup() {
   export ONIONARMOR_KH_STATE_DIR="$SB/var/lib/onionarmor/kernel-hardening"
   export ONIONARMOR_AUDIT_LOG="$SB/var/log/onionarmor/audit.log"
   export ONIONARMOR_OPERATOR="bats-test"
+
+  # Derive DROPIN from the same knob lib.sh uses, so a test overriding the
+  # filename exercises the real production contract, not a hardcoded path.
   : "${ONIONARMOR_KH_DROPIN_NAME:=99-onionarmor-kernel-hardening.conf}"
   export ONIONARMOR_KH_DROPIN_NAME
   export DROPIN="$ONIONARMOR_SYSCTL_DIR/$ONIONARMOR_KH_DROPIN_NAME"
 
-  # Fake kernel sysctl state.
-  export KH_STATE="$SB/proc/sysctl-state"
-  mkdir -p "$ONIONARMOR_SYSCTL_DIR" "$(dirname "$KH_STATE")"
-  : > "$KH_STATE"
+  # The stub keeps fake per-key kernel state here.
+  export KH_FAKE_STATE="$SB/kernel-state"
+  mkdir -p "$ONIONARMOR_SYSCTL_DIR" "$KH_FAKE_STATE"
 
   _build_stubs
   export ONIONARMOR_SYSCTL_CMD="$STUB/sysctl"
+
   export STUB_SYSCTL_LOG="$SB/sysctl.log"
   : > "$STUB_SYSCTL_LOG"
 }
@@ -48,48 +53,53 @@ teardown() {
   if [ -n "${SB:-}" ] && [ -d "$SB" ]; then rm -rf "$SB"; fi
 }
 
-# seed_sysctl KEY VALUE : preset a live kernel value (an insecure default).
-seed_sysctl() {
-  printf '%s=%s\n' "$1" "$2" >> "$KH_STATE"
-}
-
-# live_sysctl KEY : read the current stubbed kernel value.
-live_sysctl() {
-  "$ONIONARMOR_SYSCTL_CMD" -n "$1"
+# desired_keys: emit "key value" pairs (the canonical KSPP set) so tests can
+# assert against the same source of truth the module renders from.
+desired_keys() {
+  sed -n 's/^\([a-z0-9._]*\) = \(.*\)$/\1 \2/p' "$DROPIN"
 }
 
 _build_stubs() {
+  # sysctl stub: emulate the kernel's per-key runtime state through files under
+  # $KH_FAKE_STATE (one file per key, key name with '/' for '.').
+  #   sysctl --system     -> load every managed key from the drop-in into state
+  #   sysctl -w KEY=VALUE  -> set one key's state
+  #   sysctl -n KEY        -> echo the key's state; for a key never loaded, echo
+  #                           a deliberately "wrong" pre-hardening value (0) so
+  #                           drift is visible before apply.
   cat > "$STUB/sysctl" <<'EOF'
 #!/bin/sh
 LOG="${STUB_SYSCTL_LOG:-/dev/null}"
-STATE="${KH_STATE:?}"
+STATE="${KH_FAKE_STATE:?}"
 DROPIN="${ONIONARMOR_SYSCTL_DIR:?}/${ONIONARMOR_KH_DROPIN_NAME:-99-onionarmor-kernel-hardening.conf}"
 printf '%s\n' "$*" >> "$LOG"
-set_kv() {
-  k=$1; v=$2; tmp="$STATE.tmp.$$"
-  grep -v "^$k=" "$STATE" 2>/dev/null > "$tmp" || :
-  printf '%s=%s\n' "$k" "$v" >> "$tmp"
-  mv "$tmp" "$STATE"
-}
+
+keyfile() { printf '%s/%s' "$STATE" "$(printf '%s' "$1" | tr '/' '.')"; }
+
 case "$1" in
   --system)
     if [ -f "$DROPIN" ]; then
-      # Load each "key = val" line from the drop-in into the fake kernel state.
-      while IFS= read -r line; do
-        case "$line" in \#*|'') continue ;; esac
-        k=$(printf '%s' "$line" | sed -n 's/^[[:space:]]*\([^=]*[^= ]\)[[:space:]]*=.*/\1/p')
-        v=$(printf '%s' "$line" | sed -n 's/^[^=]*=[[:space:]]*//p')
-        [ -n "$k" ] && set_kv "$k" "$v"
-      done < "$DROPIN"
+      # Load every "key = value" line from the drop-in into the fake state.
+      sed -n 's/^[[:space:]]*\([a-z0-9._]*\)[[:space:]]*=[[:space:]]*\(.*\)$/\1 \2/p' "$DROPIN" \
+      | while read -r k v; do
+          [ -n "$k" ] || continue
+          printf '%s' "$v" > "$(keyfile "$k")"
+        done
     fi
     exit "${KH_SYSCTL_SYSTEM_RC:-0}"
     ;;
   -w)
     kv=$2; k=${kv%%=*}; v=${kv#*=}
-    set_kv "$k" "$v"
+    printf '%s' "$v" > "$(keyfile "$k")"
     ;;
   -n)
-    grep "^$2=" "$STATE" 2>/dev/null | tail -1 | sed 's/^[^=]*=//'
+    f=$(keyfile "$2")
+    if [ -f "$f" ]; then
+      cat "$f"
+    else
+      # Pre-hardening default for any key not yet loaded: 0 (drift vs KSPP).
+      printf '0'
+    fi
     ;;
 esac
 exit 0
