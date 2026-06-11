@@ -28,6 +28,8 @@ export ONIONARMOR_PREFIX
 . "$ONIONARMOR_PREFIX/lib/sysctl_ops.sh"
 # shellcheck source=lib/module.sh
 . "$ONIONARMOR_PREFIX/lib/module.sh"
+# shellcheck source=lib/remediate.sh
+. "$ONIONARMOR_PREFIX/lib/remediate.sh"
 
 # ---------------------------------------------------------------------------
 # Usage / help.
@@ -59,6 +61,16 @@ COMMANDS (modules)
                                          exit if any check is red.
   revert  --module <name> [module opts]  Undo a module's posture.
   Run `onionarmor apply --module <name> --help` for that module's own flags.
+
+COMMANDS (auditor-driven)
+  remediate --from-audit <scorecard.json> [--dry-run|--apply]
+                                         Read an onionauditor JSON scorecard,
+                                         map failing/warning findings to the
+                                         modules that fix them, and print an
+                                         ordered apply plan (kernel first,
+                                         firewall before service-inventory, SSH
+                                         last). --dry-run (default) plans only;
+                                         --apply runs each module's apply.
 
   help                                   Show this help.
 
@@ -330,6 +342,132 @@ cmd_list_modules() {
 }
 
 # ---------------------------------------------------------------------------
+# cmd_remediate — read an onionauditor scorecard and drive module remediation.
+# Default is --dry-run (plan only); --apply runs each mapped module's apply in
+# the safe order. Read-only unless --apply is given.
+# ---------------------------------------------------------------------------
+cmd_remediate() {
+  local scorecard="" mode="dry-run"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --from-audit)   scorecard=${2:-}; shift 2 ;;
+      --from-audit=*) scorecard=${1#--from-audit=}; shift ;;
+      --dry-run)      mode="dry-run"; shift ;;
+      --apply)        mode="apply"; shift ;;
+      -h|--help)      usage; exit 0 ;;
+      *)              die "remediate: unknown argument: $1" ;;
+    esac
+  done
+
+  [ -n "$scorecard" ] || die "remediate: --from-audit <scorecard.json> is required"
+  [ -r "$scorecard" ] || die "remediate: scorecard not found or unreadable: $scorecard"
+  command -v "$ONIONARMOR_JQ_CMD" >/dev/null 2>&1 \
+    || die "remediate: '$ONIONARMOR_JQ_CMD' not found — install jq (apt install jq) to parse the scorecard"
+
+  local host profile grade generated
+  host=$(remediate_meta "$scorecard" host)
+  profile=$(remediate_meta "$scorecard" profile)
+  grade=$(remediate_meta "$scorecard" grade)
+  generated=$(remediate_meta "$scorecard" generated)
+
+  # Map every actionable finding to a module. mapped: module \t category \t
+  # status \t severity \t name \t detail (bash-3.2: temp file, not assoc array).
+  local mapped; mapped=$(mktemp)
+  trap 'rm -f "${mapped:-}" "${ordered:-}"' EXIT
+  local category status severity name explicit detail module any=0
+  while IFS=$'\t' read -r category status severity name explicit detail; do
+    [ -n "$category" ] || continue
+    any=1
+    # "-" is the placeholder remediate_extract emits for an empty interior field.
+    [ "$explicit" = "-" ] && explicit=""
+    [ "$severity" = "-" ] && severity=""
+    [ "$detail" = "-" ] && detail=""
+    module=$explicit
+    [ -n "$module" ] || module=$(remediate_module_for_category "$category")
+    [ -n "$module" ] || module="(unmapped:$category)"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$module" "$category" "$status" "$severity" "$name" "$detail" >> "$mapped"
+  done < <(remediate_extract "$scorecard")
+
+  printf 'onionarmor remediate — plan from %s\n' "$scorecard"
+  printf 'host=%s profile=%s grade=%s generated=%s\n\n' "$host" "$profile" "$grade" "$generated"
+
+  if [ "$any" -eq 0 ] || [ ! -s "$mapped" ]; then
+    info "no findings with status fail/warn — nothing to remediate"
+    return 0
+  fi
+
+  # Unique modules, ordered by apply rank (ssh-hardening forced last).
+  local ordered; ordered=$(mktemp)
+  cut -f1 "$mapped" | sort -u | while read -r module; do
+    [ -n "$module" ] || continue
+    printf '%s\t%s\n' "$(remediate_rank "$module")" "$module"
+  done | sort -n -k1,1 -k2 | cut -f2 > "$ordered"
+
+  printf 'Findings needing remediation (status fail|warn), grouped by module:\n\n'
+  local idx=0 count installed mark
+  while read -r module; do
+    [ -n "$module" ] || continue
+    idx=$((idx + 1))
+    count=$(awk -F'\t' -v m="$module" '$1==m' "$mapped" | grep -c .)
+    case "$module" in
+      \(unmapped:*\)) installed="no module maps to this category" ;;
+      *) if module_is_valid "$module" 2>/dev/null; then installed="installed"; else installed="NOT installed (skipped on --apply)"; fi ;;
+    esac
+    mark=""
+    [ "$module" = "ssh-hardening" ] && mark="   [APPLIED LAST]"
+    printf '  [%d] %-22s %2d finding(s)   %s%s\n' "$idx" "$module" "$count" "$installed" "$mark"
+    # Up to 3 sample findings for context.
+    awk -F'\t' -v m="$module" '$1==m {printf "        - %s (%s): %s\n", $5, $3, substr($6,1,72)}' "$mapped" | head -3
+  done < "$ordered"
+
+  printf '\nApply order: kernel-hardening first (safe anytime); firewall-default-deny\n'
+  printf 'before service-inventory; ssh-hardening LAST (verify the rest before risking SSH).\n'
+
+  if [ "$mode" = "dry-run" ]; then
+    printf '\nDRY-RUN: no modules applied. Re-run with --apply to execute.\n'
+    return 0
+  fi
+
+  # --- --apply: run each module in order; track results. -------------------
+  printf '\n--apply: running module remediation in order...\n\n'
+  audit_log remediate.start "scorecard=$scorecard host=$host modules=$(tr '\n' ',' < "$ordered")"
+  local prior_failure=0 ran=0 ok=0 failed=0 skipped=0 rc
+  while read -r module; do
+    [ -n "$module" ] || continue
+    case "$module" in
+      \(unmapped:*\))
+        printf '  SKIP  %-22s (no module maps to this category)\n' "$module"
+        skipped=$((skipped + 1)); continue ;;
+    esac
+    if ! module_is_valid "$module" 2>/dev/null; then
+      printf '  SKIP  %-22s (module not installed on this host)\n' "$module"
+      audit_log remediate.skip "module=$module reason=not-installed"
+      skipped=$((skipped + 1)); continue
+    fi
+    # Safety: never take on the SSH-lockout risk if an earlier posture failed.
+    if [ "$module" = "ssh-hardening" ] && [ "$prior_failure" -ne 0 ]; then
+      printf '  SKIP  %-22s (a prior module failed — refusing SSH risk until clean)\n' "$module"
+      audit_log remediate.skip "module=$module reason=prior-failure"
+      skipped=$((skipped + 1)); continue
+    fi
+    printf '  RUN   %-22s ...\n' "$module"
+    ran=$((ran + 1))
+    if remediate_run_module "$module"; then
+      rc=0; ok=$((ok + 1)); printf '  OK    %-22s\n' "$module"
+      audit_log remediate.module "module=$module result=ok"
+    else
+      rc=$?; failed=$((failed + 1)); prior_failure=1
+      printf '  FAIL  %-22s (exit %d)\n' "$module" "$rc"
+      audit_log remediate.module "module=$module result=fail rc=$rc"
+    fi
+  done < "$ordered"
+
+  audit_log remediate.done "ran=$ran ok=$ok failed=$failed skipped=$skipped"
+  printf '\nremediate: ran=%d ok=%d failed=%d skipped=%d\n' "$ran" "$ok" "$failed" "$skipped"
+  [ "$failed" -eq 0 ] || exit 2
+}
+
+# ---------------------------------------------------------------------------
 # Dispatch. apply/audit/revert route to a MODULE when --module is present,
 # otherwise keep the existing role-based sysctl behaviour.
 # ---------------------------------------------------------------------------
@@ -350,6 +488,7 @@ main() {
         || die "revert requires --module <name> (for sysctl roles use: rollback --role <r>)"
       module_dispatch revert "$@" ;;
     rollback)        cmd_rollback "$@" ;;
+    remediate)       cmd_remediate "$@" ;;
     list-modules)    cmd_list_modules "$@" ;;
     apply-lockdown)  cmd_apply_lockdown "$@" ;;
     help|--help|-h)  usage ;;
