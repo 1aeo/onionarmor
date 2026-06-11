@@ -28,6 +28,8 @@ export ONIONARMOR_PREFIX
 . "$ONIONARMOR_PREFIX/lib/sysctl_ops.sh"
 # shellcheck source=lib/module.sh
 . "$ONIONARMOR_PREFIX/lib/module.sh"
+# shellcheck source=lib/remediate.sh
+. "$ONIONARMOR_PREFIX/lib/remediate.sh"
 
 # ---------------------------------------------------------------------------
 # Usage / help.
@@ -59,6 +61,13 @@ COMMANDS (modules)
                                          exit if any check is red.
   revert  --module <name> [module opts]  Undo a module's posture.
   Run `onionarmor apply --module <name> --help` for that module's own flags.
+
+COMMANDS (auditor-driven)
+  remediate --from-audit <scan.json> [--dry-run|--apply]
+                                         Map an onionauditor scan's failing
+                                         findings to modules and apply them in a
+                                         dependency-safe order (kernel first,
+                                         ssh last). Dry-run by default.
 
   help                                   Show this help.
 
@@ -350,6 +359,7 @@ main() {
         || die "revert requires --module <name> (for sysctl roles use: rollback --role <r>)"
       module_dispatch revert "$@" ;;
     rollback)        cmd_rollback "$@" ;;
+    remediate)       cmd_remediate "$@" ;;
     list-modules)    cmd_list_modules "$@" ;;
     apply-lockdown)  cmd_apply_lockdown "$@" ;;
     help|--help|-h)  usage ;;
