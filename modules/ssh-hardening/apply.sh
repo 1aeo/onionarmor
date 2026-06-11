@@ -94,9 +94,10 @@ if [ "$SSHD_SAFETY_LATCH" -eq 1 ]; then
   if oa_latch_is_armed "$SSHD_LATCH_MODULE" && [ "$dropin_current" -eq 1 ]; then
     info "drop-in already current and a safety latch is already armed — not stacking a new latch"
   else
-    # Cancel any stale latch first so we never stack two auto-reverts.
+    # Check if there's a stale latch to cancel AFTER we arm the new one.
+    had_latch=0
     if oa_latch_is_armed "$SSHD_LATCH_MODULE"; then
-      oa_latch_cancel "$SSHD_LATCH_MODULE" >/dev/null 2>&1 || true
+      had_latch=1
     fi
     sshd_render_restore "$dropin" "$backup" "$preexisted" \
       "$ONIONARMOR_SSHD_SSHD_CMD" "$ONIONARMOR_SSHD_SYSTEMCTL" "$ONIONARMOR_SSHD_UNIT" > "$restore" \
@@ -107,6 +108,10 @@ if [ "$SSHD_SAFETY_LATCH" -eq 1 ]; then
       # backup/marker bookkeeping so a retry starts clean.
       [ "$preexisted" = "0" ] && rm -f "$preexist_marker" 2>/dev/null || true
       audit_fail_die sshd.apply.fail "stage=latch-arm" "could not arm the SSH safety latch (is atd installed and running? 'apt install at && systemctl enable --now atd') — re-run with --no-safety-latch only if you have console access"
+    fi
+    # Cancel the old latch ONLY after successfully arming the new one.
+    if [ "$had_latch" -eq 1 ]; then
+      oa_latch_cancel "$SSHD_LATCH_MODULE" >/dev/null 2>&1 || true
     fi
     latch_armed=1
   fi

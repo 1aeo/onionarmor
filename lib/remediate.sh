@@ -69,11 +69,20 @@ remediate_rank() {
 # remediate_run_module <module>: apply one module (default: self `apply`).
 remediate_run_module() {
   local m=$1
+  local flags=""
+  # Add module-specific confirmation flags so remediation can run non-interactively.
+  case "$m" in
+    account-hygiene|package-minimization)
+      flags="--confirm" ;;
+    tor-config-baseline)
+      flags="--confirm-offline-master-key" ;;
+  esac
   if [ -n "$ONIONARMOR_REMEDIATE_RUNNER" ]; then
     # shellcheck disable=SC2086  # RUNNER may be "cmd arg" — intentional split
-    $ONIONARMOR_REMEDIATE_RUNNER "$m"
+    $ONIONARMOR_REMEDIATE_RUNNER "$m" $flags
   else
-    bash "$ONIONARMOR_PREFIX/bin/onionarmor" apply --module "$m"
+    # shellcheck disable=SC2086  # flags may be empty or multiple words
+    bash "$ONIONARMOR_PREFIX/bin/onionarmor" apply --module "$m" $flags
   fi
 }
 
