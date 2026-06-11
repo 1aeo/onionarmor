@@ -188,7 +188,7 @@ EOF
       # Test/inspection hook: record the order without executing module apply.
       printf '%s\n' "$mod" >> "${ONIONARMOR_REMEDIATE_ORDER_LOG:-/dev/null}"
     else
-      ONIONARMOR_PREFIX="$ONIONARMOR_PREFIX" bash "$script" || rc=$?
+      ONIONARMOR_PREFIX="$ONIONARMOR_PREFIX" ONIONARMOR_AUTO_CONFIRM=yes bash "$script" || rc=$?
     fi
     if [ "$rc" -eq 0 ]; then
       info "[$step] $mod: OK"

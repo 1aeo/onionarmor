@@ -247,11 +247,15 @@ if [ "$reboot_required" -eq 1 ]; then
 ============================================================
 REBOOT REQUIRED
 ============================================================
-$([ "$lsm" = "apparmor" ] \
-  && printf 'AppArmor kernel cmdline (%s) has been staged in %s.\n' "$ONIONARMOR_MAC_GRUB_TOKENS" "$ONIONARMOR_GRUB_FILE" \
-  && printf 'It takes effect on next reboot. Run update-grub if your distro needs it.\n' \
-  || printf 'SELINUX=enforcing has been staged in %s.\n' "$ONIONARMOR_MAC_SELINUX_CONFIG" \
-  && printf 'Switching to enforcing may require a filesystem relabel and a reboot.\n')
+EOF
+  if [ "$lsm" = "apparmor" ]; then
+    printf 'AppArmor kernel cmdline (%s) has been staged in %s.\n' "$ONIONARMOR_MAC_GRUB_TOKENS" "$ONIONARMOR_GRUB_FILE" >&2
+    printf 'It takes effect on next reboot. Run update-grub if your distro needs it.\n' >&2
+  else
+    printf 'SELINUX=enforcing has been staged in %s.\n' "$ONIONARMOR_MAC_SELINUX_CONFIG" >&2
+    printf 'Switching to enforcing may require a filesystem relabel and a reboot.\n' >&2
+  fi
+  cat >&2 <<EOF
 onionarmor does NOT reboot or relabel automatically.
 ============================================================
 EOF

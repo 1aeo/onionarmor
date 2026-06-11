@@ -70,7 +70,7 @@ audit_log kh.apply.start "dropin=$dropin verify=$KH_VERIFY"
 # values already match, there is nothing to do — skip the reload entirely.
 # ---------------------------------------------------------------------------
 if [ -f "$dropin" ] && [ "$(cat "$dropin")" = "$rendered" ]; then
-  if [ "$KH_VERIFY" -eq 0 ] || kh_live_matches; then
+  if [ "$KH_VERIFY" -eq 0 ] || [ "${ONIONARMOR_SKIP_RELOAD:-}" = "yes" ] || kh_live_matches; then
     audit_log kh.apply.done "already-current=1"
     info "kernel-hardening already current: $dropin"
     exit 0

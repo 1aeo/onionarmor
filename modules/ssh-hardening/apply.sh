@@ -141,7 +141,7 @@ fi
 #    config the operator's client can't authenticate against cannot strand them.
 # ---------------------------------------------------------------------------
 latch_job=""
-if [ "$SSH_SAFETY_LATCH" -eq 1 ]; then
+if [ "$SSH_SAFETY_LATCH" -eq 1 ] && [ "${ONIONARMOR_SKIP_RELOAD:-}" != "yes" ]; then
   if ! command -v "$ONIONARMOR_SSH_AT" >/dev/null 2>&1; then
     die "ssh-hardening: 'at' not found — needed for the SSH safety latch. Install it (apt install at) or re-run with --no-safety-latch (console access required)."
   fi
@@ -158,6 +158,8 @@ if [ "$SSH_SAFETY_LATCH" -eq 1 ]; then
     if [ -f "$bak" ]; then cp -p "$bak" "$dropin"; else rm -f "$dropin"; fi
     audit_fail_die ssh.apply.fail "stage=latch-parse output=$latch_out" "could not schedule the safety latch — restored prior config, NOT reloading (use --no-safety-latch with console access to skip)"
   fi
+elif [ "$SSH_SAFETY_LATCH" -eq 1 ] && [ "${ONIONARMOR_SKIP_RELOAD:-}" = "yes" ]; then
+  info "ONIONARMOR_SKIP_RELOAD=yes — skipping safety latch (no reload will occur)"
 else
   old_job=$(ssh_latch_pending)
   if [ -n "$old_job" ]; then
