@@ -159,6 +159,12 @@ if [ "$SSH_SAFETY_LATCH" -eq 1 ] && [ "${ONIONARMOR_SKIP_RELOAD:-}" != "yes" ]; 
     audit_fail_die ssh.apply.fail "stage=latch-parse output=$latch_out" "could not schedule the safety latch — restored prior config, NOT reloading (use --no-safety-latch with console access to skip)"
   fi
 elif [ "$SSH_SAFETY_LATCH" -eq 1 ] && [ "${ONIONARMOR_SKIP_RELOAD:-}" = "yes" ]; then
+  old_job=$(ssh_latch_pending)
+  if [ -n "$old_job" ]; then
+    "$ONIONARMOR_SSH_ATRM" "$old_job" >/dev/null 2>&1 \
+      && info "cancelled previous safety-latch at job $old_job (ONIONARMOR_SKIP_RELOAD=yes)" \
+      || warn "could not cancel previous safety-latch at job $old_job"
+  fi
   info "ONIONARMOR_SKIP_RELOAD=yes — skipping safety latch (no reload will occur)"
 else
   old_job=$(ssh_latch_pending)
