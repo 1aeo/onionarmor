@@ -96,8 +96,12 @@ if [ "$SSHD_SAFETY_LATCH" -eq 1 ]; then
   else
     # Check if there's a stale latch to cancel AFTER we arm the new one.
     had_latch=0
+    old_jobid=""
     if oa_latch_is_armed "$SSHD_LATCH_MODULE"; then
       had_latch=1
+      # Save the old job ID before arming a new latch (which will overwrite it).
+      latch_dir=$(oa_latch_dir "$SSHD_LATCH_MODULE")
+      old_jobid=$(cat "$latch_dir/jobid" 2>/dev/null || true)
     fi
     sshd_render_restore "$dropin" "$backup" "$preexisted" \
       "$ONIONARMOR_SSHD_SSHD_CMD" "$ONIONARMOR_SSHD_SYSTEMCTL" "$ONIONARMOR_SSHD_UNIT" > "$restore" \
@@ -109,9 +113,9 @@ if [ "$SSHD_SAFETY_LATCH" -eq 1 ]; then
       [ "$preexisted" = "0" ] && rm -f "$preexist_marker" 2>/dev/null || true
       audit_fail_die sshd.apply.fail "stage=latch-arm" "could not arm the SSH safety latch (is atd installed and running? 'apt install at && systemctl enable --now atd') — re-run with --no-safety-latch only if you have console access"
     fi
-    # Cancel the old latch ONLY after successfully arming the new one.
-    if [ "$had_latch" -eq 1 ]; then
-      oa_latch_cancel "$SSHD_LATCH_MODULE" >/dev/null 2>&1 || true
+    # Cancel the old latch job (using the saved job ID, not the new one).
+    if [ "$had_latch" -eq 1 ] && [ -n "$old_jobid" ] && [ "$old_jobid" != "?" ]; then
+      "$ONIONARMOR_ATRM_CMD" "$old_jobid" >/dev/null 2>&1 || true
     fi
     latch_armed=1
   fi
