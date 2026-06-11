@@ -18,8 +18,16 @@ export PATH="/usr/local/sbin:$PATH"           # add to ~/.profile to make it sti
 
 ## `apply` says role mismatch / refuses to run
 
+If `/etc/onionarmor/role.conf` is missing:
+
+```text
+onionarmor: error: host role is not declared. Create /etc/onionarmor/role.conf with a single line: role=tor-relay
 ```
-onionarmor: refusing to apply — /etc/onionarmor/role.conf does not declare role=tor-relay
+
+If it exists but names a different role than your `--role`:
+
+```text
+onionarmor: error: host role mismatch: /etc/onionarmor/role.conf says role=eval-host but --role=tor-relay
 ```
 
 `apply` and `rollback` cross-check the host's declared role against your
@@ -35,8 +43,8 @@ a relay posture from landing on the wrong host. See [Roles](roles.md).
 
 ## `apply` refuses because `--role` is missing
 
-```
-onionarmor: apply requires --role <name>
+```text
+onionarmor: error: apply: --role <name> required
 ```
 
 There is no default role — it must be explicit. Pass `--role tor-relay`
