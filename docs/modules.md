@@ -21,10 +21,40 @@ Run `onionarmor apply --module <name> --help` for that module's own flags.
 | `dns-posture` | Local validating DoT resolver (`unbound` + DNSSEC); masks `systemd-resolved`, pins `resolv.conf`. | Medium — replaces the system resolver (clean revert). | `unbound` (auto-installed) | [README](../modules/dns-posture/README.md) |
 | `kernel-reserved-ports` | Reserve the relay's loopback tor ports from the kernel ephemeral source-port pool, so an outbound connection can't steal a port tor needs to bind. | Low — one sysctl drop-in, fully reversible. | reads your torrc (`--auto`) | [README](../modules/kernel-reserved-ports/README.md) |
 | `bgp-hardening` | Bind FRR `bgpd` to a specific peer-facing IP (not `0.0.0.0`); opt-in `tcp/179` firewall, RPKI, GTSM. | Medium — restarts `bgpd` (graceful, keeps the FIB). | FRR (`/etc/frr`) | [README](../modules/bgp-hardening/README.md) |
+| `ssh-hardening` | Mozilla "modern" OpenSSH drop-in (no root/password login, modern KEX/ciphers/MACs), weak host-key cleanup. **5-min auto-restore latch.** | Medium-high — highest lockout risk; latch + `AllowUsers` mitigate. **Default-off.** | `at`, `sshd` | [README](../modules/ssh-hardening/README.md) |
+| `account-hygiene` | Lock + de-sudo leftover cloud-init users, enforce a sudo allowlist, refuse shared UID-0, flag blanket `NOPASSWD`. **5-min latch.** | Medium — could remove your own sudo; latch + confirm mitigate. **Default-off.** | `at`, `getent`/`gpasswd` | [README](../modules/account-hygiene/README.md) |
+| `tor-config-baseline` | Baseline torrc directives across instances (stats off, signing-key lifetime, loopback Metrics/Control, cookie auth) without touching operator-domain config. | Medium — reloads tor. **Default-off.** | `/etc/tor/instances` | [README](../modules/tor-config-baseline/README.md) |
+| `kernel-hardening` | KSPP-recommended sysctl drop-in (dmesg/kptr/bpf/ptrace restrictions, rp_filter, source-route/redirect off). | Very low — runtime-reversible. **Default-on.** | none | [README](../modules/kernel-hardening/README.md) |
+| `package-minimization` | Remove the build toolchain + debug tools (gcc/make/gdb/strace/...) from production relays; skipped on build/CI roles. | Low — reinstallable on demand. **Default-on.** | `apt`/`dpkg` | [README](../modules/package-minimization/README.md) |
+| `mac-profile-install` | Install + enforce a MAC LSM (AppArmor on Debian/Ubuntu, SELinux on RHEL) and enforce the tor profile. | Low — failure mode is permissive, not broken. **Default-on.** | `apparmor`/`selinux` | [README](../modules/mac-profile-install/README.md) |
 
 Each module's README has its flags, customization examples, threat model, and
 the exact files it manages. **Start with the dry-run** — every module prints its
 full plan and changes nothing until you drop `--dry-run`.
+
+## Auditor-driven remediation (`remediate`)
+
+[`onionauditor`](https://github.com/) scores a host across categories
+(`ssh-hardness`, `firewall`, `accounts`, `kernel-sysctl`, …). `onionarmor
+remediate` reads that scan and maps each failing finding to the module that fixes
+it, then applies them in a dependency-safe order — `kernel-hardening` first,
+`ssh-hardening` **last** (so you can confirm everything else worked before risking
+the SSH config), with `firewall-default-deny` before any service-inventory work.
+
+```sh
+onionauditor scan --output json > /tmp/score.json
+onionarmor remediate --from-audit /tmp/score.json            # dry-run plan
+onionarmor remediate --from-audit /tmp/score.json --apply    # apply in order
+onionauditor scan                                            # re-score to confirm uplift
+```
+
+The mapping is category → module (the auditor finding's `category` field): e.g.
+`ssh-hardness → ssh-hardening`, `firewall → firewall-default-deny`, `accounts →
+account-hygiene`, `kernel-sysctl → kernel-hardening`, `tor-config →
+tor-config-baseline`, `package-hygiene → package-minimization`, `time-ntp →
+chrony-pinning`, `tor-dns-resolver → dns-posture`, `systemd-tor-units →
+systemd-hardening`. Categories with no module (e.g. `service-inventory`) are
+listed as unmapped. Each apply cites the auditor finding ids it addresses.
 
 ## How a module works
 
