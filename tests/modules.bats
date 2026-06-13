@@ -137,8 +137,10 @@ setup() {
   ONIONARMOR_AUDIT_LOG="$d/audit.log" ONIONARMOR_SYSCTL_CMD=true \
     run "$BIN" revert --module kernel-hardening --dry-run
   [ "$status" -eq 0 ]
-  # Neither dry-run created the managed sysctl dir, a drop-in, or an audit log.
-  [ ! -d "$d/sysctl.d" ] || [ -z "$(ls -A "$d/sysctl.d" 2>/dev/null)" ]
+  # Neither dry-run created the managed sysctl dir / drop-in, the module state
+  # dir (where a backup drop-in would land), or an audit log.
+  [ ! -e "$d/sysctl.d" ]
+  [ ! -e "$d/state" ]
   [ ! -e "$d/audit.log" ]
   rm -rf "$d"
 }
