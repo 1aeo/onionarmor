@@ -27,6 +27,21 @@ if [ -f "$state_path" ]; then
   if grep -q '^grub_modified=1' "$state_path" 2>/dev/null; then grub_modified=1; fi
 fi
 
+# --- dry-run: preview the revert plan, change nothing -----------------------
+if [ "${MAC_DRY_RUN:-0}" -eq 1 ]; then
+  oa_dryrun_header mac-profile-install revert
+  if [ "$lsm" = "apparmor" ]; then
+    oa_would "aa-disable the tor profile $tor_profile (AppArmor itself left enabled)"
+    if [ "$grub_modified" -eq 1 ] && [ -f "$grub_backup" ]; then
+      oa_would "restore grub cmdline in $ONIONARMOR_GRUB_FILE from $grub_backup (reboot required)"
+    fi
+  else
+    oa_would "set SELINUX=permissive in $ONIONARMOR_MAC_SELINUX_CONFIG (SELinux left installed)"
+  fi
+  [ -f "$state_path" ] && oa_would "clear apply state $state_path"
+  exit 0
+fi
+
 info "revert relaxes mandatory access control to PERMISSIVE — the LSM stays installed (failure mode: permissive, not broken)"
 audit_log mac.revert.start "lsm=$lsm grub_modified=$grub_modified"
 

@@ -14,6 +14,20 @@ dns_parse_flags "$@"
 snippet=$(dns_snippet_path)
 backup=$(dns_resolv_backup)
 
+# --- dry-run: preview the revert plan, change nothing -----------------------
+if [ "${DNS_DRY_RUN:-0}" -eq 1 ]; then
+  oa_dryrun_header dns-posture revert
+  oa_would "clear the immutable bit on $DNS_RESOLV_CONF"
+  if [ -e "$backup" ]; then
+    oa_would "restore $DNS_RESOLV_CONF from backup $backup"
+  else
+    oa_would "leave $DNS_RESOLV_CONF as-is (no backup present)"
+  fi
+  [ -f "$snippet" ] && oa_would "remove unbound snippet $snippet and reload unbound"
+  oa_would "unmask + restart systemd-resolved (unbound left installed)"
+  exit 0
+fi
+
 audit_log dns.revert.start "resolv=$DNS_RESOLV_CONF snippet=$snippet"
 
 # ---------------------------------------------------------------------------

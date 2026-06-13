@@ -17,6 +17,22 @@ backup=$(bgp_daemons_backup_path)
 marker=$(bgp_rpki_marker_path)
 touched=0
 
+# --- dry-run: preview the revert plan, change nothing -----------------------
+if [ "${BGP_DRY_RUN:-0}" -eq 1 ]; then
+  oa_dryrun_header bgp-hardening revert
+  if [ -f "$backup" ]; then
+    oa_would "restore $daemons from backup $backup"
+  else
+    oa_would "leave $daemons as-is (no apply-time backup present)"
+  fi
+  if [ -e "$(bgp_firewall_peers_path)" ]; then
+    oa_would "delete nft table inet $BGP_NFT_TABLE and remove firewall.peers marker"
+  fi
+  [ -e "$marker" ] && oa_would "remove FRR rpki cache/route-map marker $marker"
+  oa_would "disable the rpki validator (FRR left installed) and reload FRR"
+  exit 0
+fi
+
 audit_log bgp.revert.start "daemons=$daemons firewall=$BGP_FIREWALL"
 
 # ---------------------------------------------------------------------------

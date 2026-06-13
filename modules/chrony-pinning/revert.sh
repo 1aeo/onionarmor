@@ -19,6 +19,22 @@ conf=$(chr_conf_path)
 backup=$(chr_mainconf_backup)
 state=$(chr_state_file)
 
+# --- dry-run: preview the revert plan, change nothing -----------------------
+if [ "${CHR_DRY_RUN:-0}" -eq 1 ]; then
+  oa_dryrun_header chrony-pinning revert
+  had=0
+  for f in "$sources" "$conf"; do
+    [ -f "$f" ] && { oa_would "remove $f"; had=1; }
+  done
+  [ -f "$backup" ] && { oa_would "restore $ONIONARMOR_CHR_MAIN_CONF from backup $backup"; had=1; }
+  if [ "$had" -eq 1 ] || [ -f "$state" ]; then
+    oa_would "unmask + restart systemd-timesyncd and stop chrony (chrony left installed)"
+  else
+    oa_would "nothing to remove — no module-owned chrony files present"
+  fi
+  exit 0
+fi
+
 audit_log chr.revert.start "sources=$sources conf=$conf"
 
 # ---------------------------------------------------------------------------

@@ -16,6 +16,14 @@ uu_parse_flags "$@"
 f50=$(uu_50_path)
 f20=$(uu_20_path)
 
+# --- dry-run: preview the revert plan, change nothing -----------------------
+if [ "${UU_DRY_RUN:-0}" -eq 1 ]; then
+  oa_dryrun_header unattended-upgrades revert
+  oa_would "restore distro defaults from backup (or remove onionarmor-managed config): $f50, $f20"
+  oa_would "disable + mask $ONIONARMOR_UU_SERVICE — turns OFF automatic security upgrades"
+  exit 0
+fi
+
 warn "revert disables automatic security upgrades — this REMOVES a security control"
 audit_log uu.revert.start "f50=$f50 f20=$f20"
 

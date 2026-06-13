@@ -109,3 +109,16 @@ load test_helper
   grep -q 'krp.revert.backup' "$ONIONARMOR_AUDIT_LOG"
   grep -q 'krp.revert.done' "$ONIONARMOR_AUDIT_LOG"
 }
+
+@test "revert --dry-run: previews the plan and changes nothing on disk" {
+  # Establish an applied posture so a real revert would have work to do.
+  bash "$APPLY" >/dev/null 2>&1 || true
+  _oa_snap() { ( cd "$SB" && find . -type f -exec cksum {} + 2>/dev/null | sort ); }
+  before="$(_oa_snap)"
+  run bash "$REVERT" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dry-run"* ]]
+  [[ "$output" == *"would:"* ]]
+  after="$(_oa_snap)"
+  [ "$before" = "$after" ]
+}

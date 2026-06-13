@@ -13,6 +13,24 @@ _here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 pm_parse_flags "$@"
 
 removed_path=$(pm_removed_path)
+
+# --- dry-run: preview the revert plan, change nothing -----------------------
+if [ "${PM_DRY_RUN:-0}" -eq 1 ]; then
+  oa_dryrun_header package-minimization revert
+  if [ -f "$removed_path" ]; then
+    pkgs=$(tr '\n' ' ' < "$removed_path" | tr -s ' ' | sed 's/^ *//;s/ *$//')
+    if [ -n "$pkgs" ]; then
+      oa_would "reinstall via '$ONIONARMOR_PM_APT install -y': $pkgs"
+      oa_would "clear recorded set $removed_path"
+    else
+      oa_would "nothing to reinstall — removed.list is empty ($removed_path)"
+    fi
+  else
+    oa_would "nothing to reinstall — no recorded removals at $removed_path"
+  fi
+  exit 0
+fi
+
 audit_log pm.revert.start "list=$removed_path"
 
 # ---------------------------------------------------------------------------

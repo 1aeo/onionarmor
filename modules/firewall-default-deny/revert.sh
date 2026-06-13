@@ -17,6 +17,15 @@ fw_parse_flags "$@"
 manifest_path=$(fw_manifest_path)
 latch_state=$(fw_latch_state_path)
 
+# --- dry-run: preview the revert plan, change nothing -----------------------
+if [ "${FW_DRY_RUN:-0}" -eq 1 ]; then
+  oa_dryrun_header firewall-default-deny revert
+  oa_would "cancel any pending safety-latch at-job; remove latch state $latch_state"
+  oa_would "run '$ONIONARMOR_FW_UFW disable' then '$ONIONARMOR_FW_UFW --force reset' (drops onionarmor rules + default-deny policy)"
+  [ -f "$manifest_path" ] && oa_would "remove manifest $manifest_path"
+  exit 0
+fi
+
 warn "revert DISABLES the firewall — closed ports will again emit kernel RSTs (attack surface returns)"
 audit_log fw.revert.start "manifest=$manifest_path"
 

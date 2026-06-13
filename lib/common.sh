@@ -42,6 +42,22 @@ oa_utc_ts() { date -u +%Y%m%dT%H%M%SZ; }
 oa_utc_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 # ---------------------------------------------------------------------------
+# Dry-run preview helpers. A module action invoked with --dry-run must print
+# the exact host changes it WOULD make and then exit WITHOUT touching the host
+# (no file writes, no sysctl/systemctl, not even an audit-log line). These give
+# every module's apply/revert preview one shared banner + "would:" line format
+# so the operator sees a consistent, greppable plan.
+#
+#   oa_dryrun_header <module> <action>   banner: "dry-run: <module> <action> — no host changes"
+#   oa_would <text...>                   one planned action: "  would: <text>"
+# ---------------------------------------------------------------------------
+oa_dryrun_header() {
+  info "dry-run: $1 $2 — no host changes (preview only; nothing below is executed)"
+  printf '\nPLAN\n'
+}
+oa_would() { printf '  would: %s\n' "$*"; }
+
+# ---------------------------------------------------------------------------
 # Module audit status reporting. Every module's audit.sh reports a series of
 # green/yellow/red checks then a verdict; this is the shared machinery so the
 # three modules don't each carry an identical reporter + summary block.

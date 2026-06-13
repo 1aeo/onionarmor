@@ -12,6 +12,28 @@ _here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 sh_parse_flags "$@"
 
+# --- dry-run: preview the revert plan, change nothing -----------------------
+if [ "${SH_DRY_RUN:-0}" -eq 1 ]; then
+  oa_dryrun_header systemd-hardening revert
+  dry_units=()
+  for d in "$ONIONARMOR_SH_DROPIN_ROOT"/*.d; do
+    [ -d "$d" ] || continue
+    path="$d/$ONIONARMOR_SH_DROPIN_NAME"
+    sh_is_managed_dropin "$path" || continue
+    base=$(basename "$d")
+    dry_units+=("${base%.d}")
+  done
+  if [ "${#dry_units[@]}" -eq 0 ]; then
+    oa_would "nothing to revert — no managed drop-ins under $ONIONARMOR_SH_DROPIN_ROOT"
+  else
+    for u in "${dry_units[@]}"; do
+      oa_would "remove drop-in $(sh_dropin_path "$u") and restart $u unsandboxed"
+    done
+    oa_would "run '$ONIONARMOR_SH_SYSTEMCTL daemon-reload' before the restarts"
+  fi
+  exit 0
+fi
+
 audit_log sh.revert.start "root=$ONIONARMOR_SH_DROPIN_ROOT"
 
 # Discover our managed drop-ins under the drop-in root.
