@@ -57,7 +57,8 @@ load test_helper
 
 @test "revert --dry-run: previews the plan and changes nothing on disk" {
   # Establish an applied posture so a real revert would have work to do.
-  bash "$APPLY" >/dev/null 2>&1 || true
+  run bash "$APPLY"
+  [ "$status" -eq 0 ]
   _oa_snap() { ( cd "$SB" && find . -type f -exec cksum {} + 2>/dev/null | sort ); }
   before="$(_oa_snap)"
   run bash "$REVERT" --dry-run

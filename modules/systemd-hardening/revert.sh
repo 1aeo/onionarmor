@@ -30,6 +30,7 @@ if [ "${SH_DRY_RUN:-0}" -eq 1 ]; then
       oa_would "remove drop-in $(sh_dropin_path "$u") and restart $u unsandboxed"
     done
     oa_would "run '$ONIONARMOR_SH_SYSTEMCTL daemon-reload' before the restarts"
+    [ -e "$(sh_activated_state)" ] && oa_would "remove activated-state file $(sh_activated_state)"
   fi
   exit 0
 fi

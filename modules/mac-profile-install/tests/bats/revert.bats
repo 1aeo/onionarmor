@@ -89,7 +89,8 @@ load test_helper
   # LSM; establish the Debian/AppArmor sandbox + an applied posture first.
   set_debian
   seed_tor_profile complain
-  bash "$APPLY" >/dev/null 2>&1 || true
+  run bash "$APPLY"
+  [ "$status" -eq 0 ]
   _oa_snap() { ( cd "$SB" && find . -type f -exec cksum {} + 2>/dev/null | sort ); }
   before="$(_oa_snap)"
   run bash "$REVERT" --dry-run

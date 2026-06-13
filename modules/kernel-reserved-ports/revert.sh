@@ -20,14 +20,22 @@ if [ "${KRP_DRY_RUN:-0}" -eq 1 ]; then
   oa_dryrun_header kernel-reserved-ports revert
   if [ -f "$dropin" ]; then
     oa_would "back up drop-in to $backup, then remove $dropin"
-    [ -f "$(krp_filters_path)" ] && oa_would "remove filter state $(krp_filters_path)"
+  else
+    oa_would "no drop-in at $dropin — nothing to back up or remove"
+  fi
+  # The filter-state file is removed whenever it is present, independent of the
+  # drop-in (matches step 1b of the live revert).
+  [ -f "$(krp_filters_path)" ] && oa_would "remove filter state $(krp_filters_path)"
+  # Runtime is only cleared when our drop-in was present (we must not clobber a
+  # value some other tool set) and reload is not skipped.
+  if [ -f "$dropin" ]; then
     if [ "${ONIONARMOR_SKIP_RELOAD:-}" = "yes" ]; then
       oa_would "leave runtime $KRP_SYSCTL_KEY untouched (ONIONARMOR_SKIP_RELOAD=yes; a reboot clears it)"
     else
       oa_would "clear runtime $KRP_SYSCTL_KEY and re-run $ONIONARMOR_SYSCTL_CMD --system"
     fi
   else
-    oa_would "nothing to remove — no drop-in at $dropin"
+    oa_would "leave runtime $KRP_SYSCTL_KEY as-is (no onionarmor drop-in was present)"
   fi
   exit 0
 fi

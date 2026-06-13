@@ -31,12 +31,24 @@ fi
 if [ "${MAC_DRY_RUN:-0}" -eq 1 ]; then
   oa_dryrun_header mac-profile-install revert
   if [ "$lsm" = "apparmor" ]; then
-    oa_would "aa-disable the tor profile $tor_profile (AppArmor itself left enabled)"
+    if mac_aa_tor_profile_exists; then
+      if mac_skip_reload; then
+        oa_would "(SKIP_RELOAD) plan only: aa-disable the tor profile $tor_profile — not invoked"
+      else
+        oa_would "aa-disable the tor profile $tor_profile (AppArmor itself left enabled)"
+      fi
+    else
+      oa_would "no tor profile at $tor_profile — nothing to relax"
+    fi
     if [ "$grub_modified" -eq 1 ] && [ -f "$grub_backup" ]; then
       oa_would "restore grub cmdline in $ONIONARMOR_GRUB_FILE from $grub_backup (reboot required)"
     fi
   else
-    oa_would "set SELINUX=permissive in $ONIONARMOR_MAC_SELINUX_CONFIG (SELinux left installed)"
+    if grep -qE '^[[:space:]]*SELINUX=' "$ONIONARMOR_MAC_SELINUX_CONFIG" 2>/dev/null; then
+      oa_would "set SELINUX=permissive in $ONIONARMOR_MAC_SELINUX_CONFIG (SELinux left installed)"
+    else
+      oa_would "no SELINUX= line in $ONIONARMOR_MAC_SELINUX_CONFIG — nothing to relax"
+    fi
   fi
   [ -f "$state_path" ] && oa_would "clear apply state $state_path"
   exit 0

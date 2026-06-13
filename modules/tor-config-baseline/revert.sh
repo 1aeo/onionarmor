@@ -19,20 +19,34 @@ if [ "${TCB_DRY_RUN:-0}" -eq 1 ]; then
   if [ -z "$instances" ]; then
     oa_would "nothing to revert — no tor instances found"
   else
+    would_reload=0
     while IFS=' ' read -r name file; do
       [ -n "$name" ] || continue
       backup=$(tcb_backup_path "$name")
       if [ -f "$backup" ]; then
-        oa_would "$name: restore original torrc $file from backup $backup, then reload"
+        if [ -f "$file" ] && cmp -s "$backup" "$file"; then
+          oa_would "$name: already matches backup — nothing to restore"
+        else
+          oa_would "$name: restore original torrc $file from backup $backup"
+          would_reload=1
+        fi
       elif [ -f "$file" ] && tcb_block_present "$file"; then
-        oa_would "$name: strip the managed block from $file, then reload"
+        oa_would "$name: strip the managed block from $file"
+        would_reload=1
       else
         oa_would "$name: nothing to do (no backup and no managed block in $file)"
       fi
     done <<EOF
 $instances
 EOF
-    oa_would "clear module state $ONIONARMOR_TCB_STATE_DIR"
+    if [ "$would_reload" -eq 1 ]; then
+      if [ "${ONIONARMOR_SKIP_RELOAD:-}" = "yes" ]; then
+        oa_would "skip reloads of changed instances (ONIONARMOR_SKIP_RELOAD=yes)"
+      else
+        oa_would "reload each changed instance"
+      fi
+    fi
+    oa_would "clear module state $ONIONARMOR_TCB_STATE_DIR (only if every instance reverts cleanly)"
   fi
   exit 0
 fi

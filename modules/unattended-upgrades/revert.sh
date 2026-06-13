@@ -20,7 +20,24 @@ f20=$(uu_20_path)
 if [ "${UU_DRY_RUN:-0}" -eq 1 ]; then
   oa_dryrun_header unattended-upgrades revert
   oa_would "restore distro defaults from backup (or remove onionarmor-managed config): $f50, $f20"
-  oa_would "disable + mask $ONIONARMOR_UU_SERVICE — turns OFF automatic security upgrades"
+  # The service is disabled+masked ONLY when there is evidence the module managed
+  # it (flags state, a backup, or a managed config) — mirror that ownership gate
+  # so the preview never claims to strip automatic upgrades the module never set.
+  dry_flags_state=$(uu_flags_state_path)
+  dry_b50=$(uu_backup_path "$(basename "$f50")")
+  dry_b20=$(uu_backup_path "$(basename "$f20")")
+  dry_owned=0
+  if [ -f "$dry_flags_state" ] || [ -f "$dry_b50" ] || [ -f "$dry_b20" ]; then
+    dry_owned=1
+  elif { [ -f "$f50" ] && grep -q 'Managed by onionarmor' "$f50" 2>/dev/null; } \
+    || { [ -f "$f20" ] && grep -q 'Managed by onionarmor' "$f20" 2>/dev/null; }; then
+    dry_owned=1
+  fi
+  if [ "$dry_owned" -eq 1 ]; then
+    oa_would "disable + mask $ONIONARMOR_UU_SERVICE — turns OFF automatic security upgrades"
+  else
+    oa_would "leave $ONIONARMOR_UU_SERVICE as-is (no ownership markers — module did not manage it)"
+  fi
   exit 0
 fi
 

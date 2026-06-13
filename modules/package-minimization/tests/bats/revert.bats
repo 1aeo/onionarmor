@@ -83,7 +83,8 @@ removed_list() { cat "$ONIONARMOR_PM_STATE_DIR/removed.list" 2>/dev/null; }
 
 @test "revert --dry-run: previews the plan and changes nothing on disk" {
   # Establish an applied posture so a real revert would have work to do.
-  bash "$APPLY" >/dev/null 2>&1 || true
+  run bash "$APPLY" --yes
+  [ "$status" -eq 0 ]
   _oa_snap() { ( cd "$SB" && find . -type f -exec cksum {} + 2>/dev/null | sort ); }
   before="$(_oa_snap)"
   run bash "$REVERT" --dry-run

@@ -20,8 +20,17 @@ latch_state=$(fw_latch_state_path)
 # --- dry-run: preview the revert plan, change nothing -----------------------
 if [ "${FW_DRY_RUN:-0}" -eq 1 ]; then
   oa_dryrun_header firewall-default-deny revert
-  oa_would "cancel any pending safety-latch at-job; remove latch state $latch_state"
-  oa_would "run '$ONIONARMOR_FW_UFW disable' then '$ONIONARMOR_FW_UFW --force reset' (drops onionarmor rules + default-deny policy)"
+  job=$(fw_latch_pending)
+  if [ -n "$job" ]; then
+    oa_would "cancel pending safety-latch at-job $job and remove latch state $latch_state"
+  else
+    oa_would "remove latch state $latch_state (no pending safety-latch at-job)"
+  fi
+  if command -v "$ONIONARMOR_FW_UFW" >/dev/null 2>&1; then
+    oa_would "run '$ONIONARMOR_FW_UFW disable' then '$ONIONARMOR_FW_UFW --force reset' (drops onionarmor rules + default-deny policy)"
+  else
+    oa_would "skip ufw disable/reset — $ONIONARMOR_FW_UFW not found (clean up onionarmor state only)"
+  fi
   [ -f "$manifest_path" ] && oa_would "remove manifest $manifest_path"
   exit 0
 fi

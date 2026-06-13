@@ -20,8 +20,15 @@ if [ "${PM_DRY_RUN:-0}" -eq 1 ]; then
   if [ -f "$removed_path" ]; then
     pkgs=$(tr '\n' ' ' < "$removed_path" | tr -s ' ' | sed 's/^ *//;s/ *$//')
     if [ -n "$pkgs" ]; then
-      oa_would "reinstall via '$ONIONARMOR_PM_APT install -y': $pkgs"
-      oa_would "clear recorded set $removed_path"
+      if [ "${ONIONARMOR_SKIP_RELOAD:-}" = "yes" ]; then
+        # SKIP_RELOAD: apt is not invoked, so nothing is reinstalled and the
+        # recorded set is kept (matches the live revert).
+        oa_would "(SKIP_RELOAD) not invoke apt — would reinstall: $pkgs"
+        oa_would "keep recorded set $removed_path (no apt run)"
+      else
+        oa_would "reinstall via '$ONIONARMOR_PM_APT install -y': $pkgs"
+        oa_would "clear recorded set $removed_path (on successful reinstall)"
+      fi
     else
       oa_would "nothing to reinstall — removed.list is empty ($removed_path)"
     fi

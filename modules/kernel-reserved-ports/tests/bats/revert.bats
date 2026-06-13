@@ -111,8 +111,12 @@ load test_helper
 }
 
 @test "revert --dry-run: previews the plan and changes nothing on disk" {
-  # Establish an applied posture so a real revert would have work to do.
-  bash "$APPLY" >/dev/null 2>&1 || true
+  # Seed a tor metrics fleet so --auto detects ports and apply writes the
+  # drop-in — a state where a live revert would mutate.
+  seed_metrics_fleet 48010 48050
+  run bash "$APPLY" --auto
+  [ "$status" -eq 0 ]
+  [ -f "$DROPIN" ]
   _oa_snap() { ( cd "$SB" && find . -type f -exec cksum {} + 2>/dev/null | sort ); }
   before="$(_oa_snap)"
   run bash "$REVERT" --dry-run

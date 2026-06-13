@@ -79,14 +79,19 @@ load test_helper
 }
 
 @test "revert --dry-run: previews the plan and changes nothing on disk" {
-  # Establish an applied posture so a real revert would have work to do.
-  bash "$APPLY" >/dev/null 2>&1 || true
+  # Seed a tor instance + apply so the managed block is present and a live
+  # revert would mutate.
+  seed_instance relay1 "ORPort 9001" "Nickname examplerelay"
+  run bash "$APPLY"
+  [ "$status" -eq 0 ]
+  grep -q 'onionarmor tor-config-baseline' "$(torrc_path relay1)"
   _oa_snap() { ( cd "$SB" && find . -type f -exec cksum {} + 2>/dev/null | sort ); }
   before="$(_oa_snap)"
   run bash "$REVERT" --dry-run
   [ "$status" -eq 0 ]
   [[ "$output" == *"dry-run"* ]]
   [[ "$output" == *"would:"* ]]
+  [[ "$output" == *"relay1:"* ]]
   after="$(_oa_snap)"
   [ "$before" = "$after" ]
 }
