@@ -53,3 +53,17 @@ load test_helper
   bash "$REVERT" >/dev/null
   run bash "$AUDIT"; [ "$status" -eq 1 ]   # ufw now inactive -> red
 }
+
+@test "revert --dry-run: previews the plan and changes nothing on disk" {
+  # Establish an applied posture so a real revert would have work to do.
+  run bash "$APPLY"
+  [ "$status" -eq 0 ]
+  _oa_snap() { ( cd "$SB" && find . -type f -exec cksum {} + 2>/dev/null | sort ); }
+  before="$(_oa_snap)"
+  run bash "$REVERT" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dry-run"* ]]
+  [[ "$output" == *"would:"* ]]
+  after="$(_oa_snap)"
+  [ "$before" = "$after" ]
+}

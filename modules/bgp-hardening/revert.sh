@@ -17,6 +17,37 @@ backup=$(bgp_daemons_backup_path)
 marker=$(bgp_rpki_marker_path)
 touched=0
 
+# --- dry-run: preview the revert plan, change nothing -----------------------
+# Each real action is gated on an apply-time ownership marker (or the daemons
+# backup); the preview mirrors those exact gates so it never claims a change the
+# live revert would skip. would_touch tracks whether anything is owned, which is
+# what decides the final FRR reload/restart (and whether it happens at all).
+if [ "${BGP_DRY_RUN:-0}" -eq 1 ]; then
+  oa_dryrun_header bgp-hardening revert
+  would_touch=0
+  if [ -f "$backup" ]; then
+    oa_would "restore $daemons from backup $backup"
+    would_touch=1
+  else
+    oa_would "leave $daemons as-is (no apply-time backup present)"
+  fi
+  [ -e "$(bgp_firewall_peers_path)" ] && { oa_would "delete nft table inet $BGP_NFT_TABLE and clear the firewall.peers marker"; would_touch=1; }
+  [ -e "$marker" ] && { oa_would "remove the FRR rpki cache + route-map (vtysh) and clear $marker"; would_touch=1; }
+  [ -e "$(bgp_norib_marker_path)" ] && { oa_would "re-assert 'no bgp no-rib' (vtysh) and clear its marker"; would_touch=1; }
+  [ -e "$(bgp_routinator_marker_path)" ] && { oa_would "disable routinator (left installed) and clear its marker"; would_touch=1; }
+  [ -e "$(bgp_gtsm_marker_path)" ] && { oa_would "remove GTSM ttl-security config (vtysh) and clear its marker"; would_touch=1; }
+  if [ "${ONIONARMOR_SKIP_RELOAD:-}" = "yes" ]; then
+    oa_would "skip FRR reload (ONIONARMOR_SKIP_RELOAD=yes)"
+  elif [ "$would_touch" -eq 0 ]; then
+    oa_would "make no changes — nothing of ours is present (no FRR reload)"
+  elif [ -f "$backup" ]; then
+    oa_would "restart FRR (daemons file restored)"
+  else
+    oa_would "reload FRR"
+  fi
+  exit 0
+fi
+
 audit_log bgp.revert.start "daemons=$daemons firewall=$BGP_FIREWALL"
 
 # ---------------------------------------------------------------------------

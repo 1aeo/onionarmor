@@ -18,6 +18,19 @@ restore=$(acct_restore_path)
 latch_state=$(acct_latch_state_path)
 snapshot=$(acct_snapshot_path)
 
+# --- dry-run: preview the revert plan, change nothing -----------------------
+if [ "${ACCT_DRY_RUN:-0}" -eq 1 ]; then
+  oa_dryrun_header account-hygiene revert
+  oa_would "cancel any pending safety-latch at-job; remove latch state $latch_state"
+  if [ -f "$restore" ]; then
+    oa_would "run restore script $restore — re-grant prior sudo membership / unlock removed accounts"
+    oa_would "remove module state: $restore, $snapshot"
+  else
+    oa_would "nothing to undo — no restore script at $restore (apply not run, or already reverted)"
+  fi
+  exit 0
+fi
+
 warn "revert re-grants sudo to the accounts account-hygiene removed it from"
 audit_log acct.revert.start "restore=$restore"
 

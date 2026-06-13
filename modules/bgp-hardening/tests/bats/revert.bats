@@ -97,3 +97,24 @@ daemons_options() {
   grep -q 'bgp.revert.daemons' "$ONIONARMOR_AUDIT_LOG"
   grep -q 'bgp.revert.done' "$ONIONARMOR_AUDIT_LOG"
 }
+
+@test "revert --dry-run: previews the plan and changes nothing on disk" {
+  # Seed a real FRR config + apply with the firewall so the revert plan is
+  # non-empty (daemons backup, firewall.peers marker, rpki/route-map markers
+  # all present) — i.e. a state where a live revert WOULD mutate.
+  seed_frr 1.2.3.4 192.0.2.1
+  run bash "$APPLY" --enable-firewall
+  [ "$status" -eq 0 ]
+  # Sanity: the apply actually established owned state for revert to act on.
+  [ -f "$ONIONARMOR_BGP_STATE_DIR/firewall.peers" ]
+  _oa_snap() { ( cd "$SB" && find . -type f -exec cksum {} + 2>/dev/null | sort ); }
+  before="$(_oa_snap)"
+  run bash "$REVERT" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dry-run"* ]]
+  [[ "$output" == *"would:"* ]]
+  # The non-empty plan must mention concrete owned actions, not a no-op.
+  [[ "$output" == *"delete nft table"* ]]
+  after="$(_oa_snap)"
+  [ "$before" = "$after" ]
+}

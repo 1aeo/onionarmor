@@ -83,3 +83,20 @@ load test_helper
   grep -q 'mac.revert.profile' "$ONIONARMOR_AUDIT_LOG"
   grep -q 'mac.revert.done' "$ONIONARMOR_AUDIT_LOG"
 }
+
+@test "revert --dry-run: previews the plan and changes nothing on disk" {
+  # mac-profile-install needs a distro context before any action resolves the
+  # LSM; establish the Debian/AppArmor sandbox + an applied posture first.
+  set_debian
+  seed_tor_profile complain
+  run bash "$APPLY"
+  [ "$status" -eq 0 ]
+  _oa_snap() { ( cd "$SB" && find . -type f -exec cksum {} + 2>/dev/null | sort ); }
+  before="$(_oa_snap)"
+  run bash "$REVERT" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dry-run"* ]]
+  [[ "$output" == *"would:"* ]]
+  after="$(_oa_snap)"
+  [ "$before" = "$after" ]
+}

@@ -19,6 +19,26 @@ kh_parse_flags "$@"
 dropin=$(kh_dropin_path)
 backup=$(kh_backup_path)
 
+# --- dry-run: preview the revert plan, change nothing -----------------------
+if [ "${KH_DRY_RUN:-0}" -eq 1 ]; then
+  oa_dryrun_header kernel-hardening revert
+  if [ -f "$dropin" ]; then
+    if [ -f "$backup" ]; then
+      oa_would "restore prior drop-in from backup ($backup -> $dropin)"
+    else
+      oa_would "remove drop-in $dropin"
+    fi
+    if [ "${ONIONARMOR_SKIP_RELOAD:-}" = "yes" ]; then
+      oa_would "skip reload (ONIONARMOR_SKIP_RELOAD=yes)"
+    else
+      oa_would "re-run $ONIONARMOR_SYSCTL_CMD --system"
+    fi
+  else
+    oa_would "nothing to remove — no drop-in at $dropin"
+  fi
+  exit 0
+fi
+
 audit_log kh.revert.start "dropin=$dropin"
 
 # ---------------------------------------------------------------------------

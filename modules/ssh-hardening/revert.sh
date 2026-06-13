@@ -18,6 +18,26 @@ dropin=$(ssh_dropin_path)
 bak=$(ssh_backup_path)
 latch_state=$(ssh_latch_state_path)
 
+# --- dry-run: preview the revert plan, change nothing -----------------------
+if [ "${SSH_DRY_RUN:-0}" -eq 1 ]; then
+  oa_dryrun_header ssh-hardening revert
+  oa_would "cancel any pending safety-latch at-job; remove latch state $latch_state"
+  if [ -f "$bak" ]; then
+    oa_would "restore prior drop-in from backup $bak -> $dropin"
+  elif [ -f "$dropin" ]; then
+    oa_would "remove hardening drop-in $dropin"
+  else
+    oa_would "no hardening drop-in present at $dropin — nothing to restore/remove"
+  fi
+  [ -d "$ONIONARMOR_SSH_STATE_DIR/hostkeys.bak" ] && oa_would "restore backed-up host-key file(s) from $ONIONARMOR_SSH_STATE_DIR/hostkeys.bak"
+  if [ "${ONIONARMOR_SKIP_RELOAD:-}" = "yes" ]; then
+    oa_would "skip sshd reload (ONIONARMOR_SKIP_RELOAD=yes)"
+  else
+    oa_would "reload $ONIONARMOR_SSH_UNIT"
+  fi
+  exit 0
+fi
+
 warn "revert relaxes SSH hardening back to the base sshd_config policy"
 audit_log ssh.revert.start "dropin=$dropin"
 

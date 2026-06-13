@@ -17,6 +17,30 @@ fw_parse_flags "$@"
 manifest_path=$(fw_manifest_path)
 latch_state=$(fw_latch_state_path)
 
+# --- dry-run: preview the revert plan, change nothing -----------------------
+if [ "${FW_DRY_RUN:-0}" -eq 1 ]; then
+  oa_dryrun_header firewall-default-deny revert
+  job=$(fw_latch_pending)
+  if [ -n "$job" ]; then
+    oa_would "cancel pending safety-latch at-job $job and remove latch state $latch_state"
+  else
+    oa_would "remove latch state $latch_state (no pending safety-latch at-job)"
+  fi
+  if command -v "$ONIONARMOR_FW_UFW" >/dev/null 2>&1; then
+    oa_would "run '$ONIONARMOR_FW_UFW disable' then '$ONIONARMOR_FW_UFW --force reset' (drops onionarmor rules + default-deny policy)"
+    aux_note=" (once ufw reset succeeds)"
+  else
+    oa_would "skip ufw disable/reset — $ONIONARMOR_FW_UFW not found (clean up onionarmor state only)"
+    aux_note=""
+  fi
+  # Auxiliary state (manifest + IPv6-choice + extra-allow) is removed only when
+  # the reset succeeded, or when ufw is absent entirely — mirror that gate.
+  [ -f "$manifest_path" ] && oa_would "remove rule manifest $manifest_path$aux_note"
+  [ -f "$(fw_ipv6_choice_path)" ] && oa_would "remove IPv6-choice state $(fw_ipv6_choice_path)$aux_note"
+  [ -f "$(fw_extra_allow_path)" ] && oa_would "remove extra-allow state $(fw_extra_allow_path)$aux_note"
+  exit 0
+fi
+
 warn "revert DISABLES the firewall — closed ports will again emit kernel RSTs (attack surface returns)"
 audit_log fw.revert.start "manifest=$manifest_path"
 
