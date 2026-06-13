@@ -56,11 +56,16 @@ COMMANDS (sysctl roles)
 
 COMMANDS (modules)
   list-modules                           List installed hardening modules.
-  apply   --module <name> [module opts]  Apply a module's posture.
+  apply   --module <name> [--dry-run] [module opts]
+                                         Apply a module's posture.
   audit   --module <name> [module opts]  Green/yellow/red status; non-zero
                                          exit if any check is red.
-  revert  --module <name> [module opts]  Undo a module's posture.
-  Run `onionarmor apply --module <name> --help` for that module's own flags.
+  revert  --module <name> [--dry-run] [module opts]
+                                         Undo a module's posture.
+  Both `apply` and `revert` accept `--dry-run`: it prints the exact filesystem
+  writes, sysctl/systemctl actions, and unit reloads that WOULD occur and exits
+  without changing the host. Run `onionarmor apply --module <name> --help` for
+  that module's own flags.
 
 COMMANDS (auditor-driven)
   remediate --from-audit <scan.json> [--dry-run|--apply]
