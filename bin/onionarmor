@@ -69,6 +69,8 @@ COMMANDS (auditor-driven)
                                          dependency-safe order (kernel first,
                                          ssh last). Dry-run by default.
 
+  version                                Print the onionarmor version
+                                         (aliases: --version, -v, -V).
   help                                   Show this help.
 
 SAFETY RAILS
@@ -339,6 +341,28 @@ cmd_list_modules() {
 }
 
 # ---------------------------------------------------------------------------
+# cmd_version — print "onionarmor <version>". The version is baked in: prefer
+# the committed VERSION file (bumped by the release process), fall back to
+# `git describe` when running from a checkout, else "unknown". The file path is
+# overridable (ONIONARMOR_VERSION_FILE) so tests can exercise each branch.
+# ---------------------------------------------------------------------------
+: "${ONIONARMOR_VERSION_FILE:=$ONIONARMOR_PREFIX/VERSION}"
+
+oa_version() {
+  local v=""
+  if [ -r "$ONIONARMOR_VERSION_FILE" ]; then
+    v=$(tr -d '[:space:]' < "$ONIONARMOR_VERSION_FILE")
+  fi
+  if [ -z "$v" ] && command -v git >/dev/null 2>&1 \
+     && git -C "$ONIONARMOR_PREFIX" rev-parse --git-dir >/dev/null 2>&1; then
+    v=$(git -C "$ONIONARMOR_PREFIX" describe --tags --always --dirty 2>/dev/null || true)
+  fi
+  printf '%s\n' "${v:-unknown}"
+}
+
+cmd_version() { printf 'onionarmor %s\n' "$(oa_version)"; }
+
+# ---------------------------------------------------------------------------
 # Dispatch. apply/audit/revert route to a MODULE when --module is present,
 # otherwise keep the existing role-based sysctl behaviour.
 # ---------------------------------------------------------------------------
@@ -362,6 +386,7 @@ main() {
     remediate)       cmd_remediate "$@" ;;
     list-modules)    cmd_list_modules "$@" ;;
     apply-lockdown)  cmd_apply_lockdown "$@" ;;
+    version|--version|-v|-V) cmd_version ;;
     help|--help|-h)  usage ;;
     *)               die "unknown command: $cmd (try: onionarmor help)" ;;
   esac
