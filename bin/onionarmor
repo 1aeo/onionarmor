@@ -60,6 +60,12 @@ COMMANDS (modules)
                                          Apply a module's posture.
   audit   --module <name> [module opts]  Green/yellow/red status; non-zero
                                          exit if any check is red.
+  diff    --module <name> [module opts]  Read-only preview: current host values
+                                         vs the values the module would write,
+                                         with a per-key delta. Writes nothing;
+                                         exits 0 regardless of drift. Modules
+                                         whose output is derived from runtime
+                                         state report "preview not available".
   revert  --module <name> [--dry-run] [module opts]
                                          Undo a module's posture.
   Both `apply` and `revert` accept `--dry-run`: it prints the exact filesystem
@@ -368,6 +374,28 @@ oa_version() {
 cmd_version() { printf 'onionarmor %s\n' "$(oa_version)"; }
 
 # ---------------------------------------------------------------------------
+# cmd_module_diff — read-only preview of what `apply --module <name>` would
+# change. Routes to the module's own diff.sh (which compares current host state
+# to the module's would-be output). Modules whose drop-in is derived from
+# runtime state (e.g. ssh-hardening's AllowUsers) ship no diff.sh; for those we
+# print a clear "preview not available" note and exit 0 rather than dying — a
+# diff that cannot be computed deterministically is not an error.
+#
+# This NEVER writes to the host: diff.sh actions are pure reads, and a module
+# without one short-circuits before any module code runs.
+# ---------------------------------------------------------------------------
+cmd_module_diff() {
+  local name; name=$(module_extract_name "$@")
+  module_validate "$name"
+  if [ ! -f "$(module_action_script "$name" diff)" ]; then
+    info "module $name has runtime branches; preview not available"
+    info "(its drop-in is derived at apply time — see: onionarmor apply --module $name --dry-run)"
+    return 0
+  fi
+  module_dispatch diff "$@"
+}
+
+# ---------------------------------------------------------------------------
 # Dispatch. apply/audit/revert route to a MODULE when --module is present,
 # otherwise keep the existing role-based sysctl behaviour.
 # ---------------------------------------------------------------------------
@@ -376,7 +404,9 @@ main() {
   local cmd=$1; shift
   case "$cmd" in
     list)            cmd_list "$@" ;;
-    diff)            cmd_diff "$@" ;;
+    diff)
+      if args_have_module "$@"; then cmd_module_diff "$@"
+      else cmd_diff "$@"; fi ;;
     apply)
       if args_have_module "$@"; then module_dispatch apply "$@"
       else cmd_apply "$@"; fi ;;
