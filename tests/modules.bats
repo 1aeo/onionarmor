@@ -106,3 +106,39 @@ setup() {
   # never the module's green/yellow/red output.
   ! [[ "$output" == *"dns-posture audit"* ]]
 }
+
+# ---------------------------------------------------------------------------
+# `revert --module <X> --dry-run` dispatch — the operator-facing preview path
+# that mirrors `apply --module <X> --dry-run` above. (The module scripts have
+# their own per-module dry-run suites; these assert the bin/onionarmor dispatch
+# wiring and the apply/revert dry-run *symmetry* end-to-end.)
+# ---------------------------------------------------------------------------
+@test "revert --module kernel-hardening --dry-run: routes to the module and previews" {
+  run "$BIN" revert --module kernel-hardening --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dry-run: kernel-hardening"* ]]
+  [[ "$output" == *"would:"* ]]
+}
+
+@test "revert --module=dns-posture (=form) --dry-run: routes to the module" {
+  run "$BIN" revert --module=dns-posture --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dry-run: dns-posture"* ]]
+  [[ "$output" == *"would:"* ]]
+}
+
+@test "apply & revert --module --dry-run dispatch write nothing to disk" {
+  d="$(mktemp -d)"
+  ONIONARMOR_SYSCTL_DIR="$d/sysctl.d" ONIONARMOR_KH_STATE_DIR="$d/state" \
+  ONIONARMOR_AUDIT_LOG="$d/audit.log" ONIONARMOR_SYSCTL_CMD=true \
+    run "$BIN" apply --module kernel-hardening --dry-run
+  [ "$status" -eq 0 ]
+  ONIONARMOR_SYSCTL_DIR="$d/sysctl.d" ONIONARMOR_KH_STATE_DIR="$d/state" \
+  ONIONARMOR_AUDIT_LOG="$d/audit.log" ONIONARMOR_SYSCTL_CMD=true \
+    run "$BIN" revert --module kernel-hardening --dry-run
+  [ "$status" -eq 0 ]
+  # Neither dry-run created the managed sysctl dir, a drop-in, or an audit log.
+  [ ! -d "$d/sysctl.d" ] || [ -z "$(ls -A "$d/sysctl.d" 2>/dev/null)" ]
+  [ ! -e "$d/audit.log" ]
+  rm -rf "$d"
+}
