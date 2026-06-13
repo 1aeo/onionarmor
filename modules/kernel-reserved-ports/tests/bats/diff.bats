@@ -46,3 +46,19 @@ DIFF() { bash "$MOD_ROOT/diff.sh" "$@"; }
   [[ "$output" == *"no ranges to reserve"* ]]
   [ ! -e "$DROPIN" ]
 }
+
+@test "diff: --auto with no detected ports calls out the empty detection" {
+  # No torrc instances seeded -> --auto finds nothing. Distinct from no-flags.
+  run DIFF --auto
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--auto detected no loopback tor ports"* ]]
+  [ ! -e "$DROPIN" ]
+}
+
+@test "diff: apply hint reflects both --auto and --reserved-range together" {
+  seed_instance relay1 "MetricsPort 127.0.0.1:48010"
+  run DIFF --auto --reserved-range 9050-9090
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Apply with: onionarmor apply --module kernel-reserved-ports --auto --reserved-range 9050-9090"* ]]
+  [ ! -e "$DROPIN" ]
+}

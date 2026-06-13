@@ -17,15 +17,32 @@ _here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 dns_parse_flags "$@"
 
-# preview_file <label> <path> <rendered-content>: print one status row.
+# preview_file <label> <path> <rendered-content> [follow-symlinks]:
+# Print one status row. When follow-symlinks=yes, mirrors oa_write_if_changed
+# logic (-f follows symlinks, compares target bytes). When no (default), a
+# symlink is always flagged for replacement (matching resolv.conf apply behavior).
 preview_file() {
-  local label=$1 path=$2 rendered=$3 status
-  if [ ! -f "$path" ]; then
-    status="→ would create"
-  elif [ "$rendered" = "$(cat "$path")" ]; then
-    status="(no change)"
+  local label=$1 path=$2 rendered=$3 follow_symlinks=${4:-no} status content
+  if [ "$follow_symlinks" = "yes" ]; then
+    # Like oa_write_if_changed: -f follows symlinks, compare target content.
+    if [ ! -e "$path" ]; then
+      status="→ would create"
+    elif [ -f "$path" ] && content=$(cat "$path" 2>/dev/null) && [ "$rendered" = "$content" ]; then
+      status="(no change)"
+    else
+      status="→ would rewrite"
+    fi
   else
-    status="→ would rewrite"
+    # Symlinks are always replaced (resolv.conf behavior).
+    if [ -L "$path" ]; then
+      status="→ would replace symlink"
+    elif [ ! -e "$path" ]; then
+      status="→ would create"
+    elif content=$(cat "$path" 2>/dev/null) && [ "$rendered" = "$content" ]; then
+      status="(no change)"
+    else
+      status="→ would rewrite"
+    fi
   fi
   printf '%-18s %-18s %s\n' "$label" "$status" "$path"
 }
@@ -35,7 +52,7 @@ printf '\n%-18s %-18s %s\n' "TARGET" "DELTA" "PATH"
 printf '%-18s %-18s %s\n' "------------------" "------------------" "----"
 
 snippet=$(dns_render_snippet)
-preview_file "unbound snippet" "$(dns_snippet_path)" "$snippet"
+preview_file "unbound snippet" "$(dns_snippet_path)" "$snippet" "yes"
 
 # resolv.conf is always managed by apply (pinned to the local resolver).
 resolv=$(dns_render_resolv_conf)
