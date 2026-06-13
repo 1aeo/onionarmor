@@ -28,10 +28,16 @@ if [ "${FW_DRY_RUN:-0}" -eq 1 ]; then
   fi
   if command -v "$ONIONARMOR_FW_UFW" >/dev/null 2>&1; then
     oa_would "run '$ONIONARMOR_FW_UFW disable' then '$ONIONARMOR_FW_UFW --force reset' (drops onionarmor rules + default-deny policy)"
+    aux_note=" (once ufw reset succeeds)"
   else
     oa_would "skip ufw disable/reset — $ONIONARMOR_FW_UFW not found (clean up onionarmor state only)"
+    aux_note=""
   fi
-  [ -f "$manifest_path" ] && oa_would "remove manifest $manifest_path"
+  # Auxiliary state (manifest + IPv6-choice + extra-allow) is removed only when
+  # the reset succeeded, or when ufw is absent entirely — mirror that gate.
+  [ -f "$manifest_path" ] && oa_would "remove rule manifest $manifest_path$aux_note"
+  [ -f "$(fw_ipv6_choice_path)" ] && oa_would "remove IPv6-choice state $(fw_ipv6_choice_path)$aux_note"
+  [ -f "$(fw_extra_allow_path)" ] && oa_would "remove extra-allow state $(fw_extra_allow_path)$aux_note"
   exit 0
 fi
 

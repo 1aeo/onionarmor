@@ -23,14 +23,18 @@ if [ "${TCB_DRY_RUN:-0}" -eq 1 ]; then
     while IFS=' ' read -r name file; do
       [ -n "$name" ] || continue
       backup=$(tcb_backup_path "$name")
+      if [ ! -f "$file" ]; then
+        oa_would "$name: skip — torrc $file is gone"
+        continue
+      fi
       if [ -f "$backup" ]; then
-        if [ -f "$file" ] && cmp -s "$backup" "$file"; then
+        if cmp -s "$backup" "$file"; then
           oa_would "$name: already matches backup — nothing to restore"
         else
           oa_would "$name: restore original torrc $file from backup $backup"
           would_reload=1
         fi
-      elif [ -f "$file" ] && tcb_block_present "$file"; then
+      elif tcb_block_present "$file"; then
         oa_would "$name: strip the managed block from $file"
         would_reload=1
       else

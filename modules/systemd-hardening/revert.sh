@@ -26,11 +26,16 @@ if [ "${SH_DRY_RUN:-0}" -eq 1 ]; then
   if [ "${#dry_units[@]}" -eq 0 ]; then
     oa_would "nothing to revert — no managed drop-ins under $ONIONARMOR_SH_DROPIN_ROOT"
   else
+    # Mirror the live order: remove every drop-in, then a single daemon-reload,
+    # then clear the activated-state marker, then restart each unit unsandboxed.
     for u in "${dry_units[@]}"; do
-      oa_would "remove drop-in $(sh_dropin_path "$u") and restart $u unsandboxed"
+      oa_would "remove drop-in $(sh_dropin_path "$u")"
     done
-    oa_would "run '$ONIONARMOR_SH_SYSTEMCTL daemon-reload' before the restarts"
+    oa_would "run '$ONIONARMOR_SH_SYSTEMCTL daemon-reload'"
     [ -e "$(sh_activated_state)" ] && oa_would "remove activated-state file $(sh_activated_state)"
+    for u in "${dry_units[@]}"; do
+      oa_would "restart $u unsandboxed"
+    done
   fi
   exit 0
 fi
