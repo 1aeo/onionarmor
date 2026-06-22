@@ -143,6 +143,7 @@ Optional postures beyond the sysctl roles. Always dry-run first; every module's
 | [`dns-posture`](modules/dns-posture/README.md) | Local validating DoT + DNSSEC resolver (`unbound`); masks `systemd-resolved`. | Medium — replaces the system resolver (clean revert) | `unbound` (auto-installed) |
 | [`kernel-reserved-ports`](modules/kernel-reserved-ports/README.md) | Reserve the relay's loopback tor ports from the kernel ephemeral pool so an outbound connection can't steal one. | Low — one sysctl drop-in, fully reversible | reads your torrc (`--auto`) |
 | [`bgp-hardening`](modules/bgp-hardening/README.md) | Bind FRR `bgpd` to a specific peer-facing IP; opt-in `tcp/179` firewall, RPKI, GTSM. | Medium — restarts `bgpd` (graceful) | FRR under `/etc/frr` |
+| [`conntrack-tuning`](modules/conntrack-tuning/README.md) | Raise the `nf_conntrack` ceiling + cap the established-flow timeout + resize the hash table so a busy relay can't pin the conntrack table full and drop packets host-wide. | Low — two persistence drop-ins, fully reversible | only where `nf_conntrack` is loaded (e.g. tailscale) |
 
 → [How modules work + authoring guide](docs/modules.md)
 

@@ -27,6 +27,7 @@ Run `onionarmor apply --module <name> --help` for that module's own flags.
 | `kernel-hardening` | KSPP-recommended sysctl drop-in (dmesg/kptr/bpf/ptrace restrictions, rp_filter, source-route/redirect off). | Very low — runtime-reversible. **Default-on.** | none | [README](../modules/kernel-hardening/README.md) |
 | `package-minimization` | Remove the build toolchain + debug tools (gcc/make/gdb/strace/...) from production relays; skipped on build/CI roles. | Low — reinstallable on demand. **Default-on.** | `apt`/`dpkg` | [README](../modules/package-minimization/README.md) |
 | `mac-profile-install` | Install + enforce a MAC LSM (AppArmor on Debian/Ubuntu, SELinux on RHEL) and enforce the tor profile. | Low — failure mode is permissive, not broken. **Default-on.** | `apparmor`/`selinux` | [README](../modules/mac-profile-install/README.md) |
+| `conntrack-tuning` | Raise the `nf_conntrack` table ceiling, cap the established-flow timeout, and resize the hash table so a busy exit relay cannot pin the conntrack table full and drop packets host-wide. Audit is `n/a` where `nf_conntrack` is not loaded. | Low — two persistence drop-ins, fully reversible. | only meaningful where `nf_conntrack` is loaded (e.g. tailscale) | [README](../modules/conntrack-tuning/README.md) |
 
 Each module's README has its flags, customization examples, threat model, and
 the exact files it manages. **Start with the dry-run** — every module prints its
