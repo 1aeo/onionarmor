@@ -76,15 +76,22 @@ audit_log ct.apply.start "sysctl_dropin=$sysctl_dropin modprobe_dropin=$modprobe
 # 1. Back up any existing drop-ins before overwriting them.
 # ---------------------------------------------------------------------------
 ct_backup_existing() {
-  # ct_backup_existing <live-path> <backup-path>
+  # ct_backup_existing <live-path> <backup-path> <rendered-content>
+  # Capture the PRE-onionarmor file exactly once so revert can restore it. Skip
+  # when: the live file is absent (nothing to save); a backup already exists
+  # (preserve the original — a re-apply must never clobber it with our managed
+  # content); or the live file is already byte-identical to what we will write
+  # (it is our own managed drop-in, not an operator original worth saving).
   [ -f "$1" ] || return 0
+  [ -f "$2" ] && return 0
+  [ "$(cat "$1")" = "$3" ] && return 0
   mkdir -p "$ONIONARMOR_CT_STATE_DIR" || die "cannot create $ONIONARMOR_CT_STATE_DIR"
   cp -p "$1" "$2" \
     || audit_fail_die ct.apply.fail "stage=backup" "failed to back up $1 -> $2"
   info "backed up existing drop-in -> $2"
 }
-ct_backup_existing "$sysctl_dropin"   "$sysctl_backup"
-ct_backup_existing "$modprobe_dropin" "$modprobe_backup"
+ct_backup_existing "$sysctl_dropin"   "$sysctl_backup"   "$sysctl_rendered"
+ct_backup_existing "$modprobe_dropin" "$modprobe_backup" "$modprobe_rendered"
 
 # ---------------------------------------------------------------------------
 # 2. Write the managed drop-ins (atomic; skip rewrite if byte-identical).

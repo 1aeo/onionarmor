@@ -52,6 +52,21 @@ load test_helper
   [ ! -f "$SYSCTL_DROPIN" ]
 }
 
+@test "apply: re-apply preserves the original pre-onionarmor backup (not clobbered)" {
+  # An operator drop-in exists first; apply backs it up, then a SECOND apply must
+  # not overwrite that one-time backup with our own managed content. Revert then
+  # restores the ORIGINAL, not the tuned values.
+  printf 'net.netfilter.nf_conntrack_max = 111\n' > "$SYSCTL_DROPIN"
+  bash "$APPLY" >/dev/null
+  bash "$APPLY" >/dev/null
+  run bash "$REVERT"
+  [ "$status" -eq 0 ]
+  [ -f "$SYSCTL_DROPIN" ]
+  grep -q "111" "$SYSCTL_DROPIN"
+  ! grep -q "2097152" "$SYSCTL_DROPIN"
+  [[ "$output" == *"restored"* ]]
+}
+
 @test "apply: persists drop-ins pre-emptively even when nf_conntrack is unloaded" {
   ct_set_unloaded
   run bash "$APPLY"
