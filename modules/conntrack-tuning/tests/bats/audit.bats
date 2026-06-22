@@ -76,3 +76,15 @@ load test_helper
   [[ "$output" == *"[warn]"* ]]
   ! [[ "$output" == *"[FAIL]"* ]]
 }
+
+@test "audit: a bad threshold override does not mask a real RED on another check" {
+  # One malformed threshold must render only ITS check unscoreable (yellow), not
+  # hide a genuine RED on a different, well-defined check.
+  bash "$APPLY" >/dev/null
+  "$ONIONARMOR_SYSCTL_CMD" -w net.netfilter.nf_conntrack_tcp_timeout_established=432000
+  ONIONARMOR_CT_MIN_MAX="notanumber" run bash "$AUDIT"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"unscoreable"* ]]
+  [[ "$output" == *"[FAIL]"* ]]
+  [[ "$output" == *"tcp_timeout_established"* ]]
+}
