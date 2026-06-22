@@ -34,23 +34,20 @@ if ! ct_module_loaded; then
   exit 0
 fi
 
-# A threshold OVERRIDE that is not a positive integer leaves the numeric checks
-# with no defined pass/fail boundary. We cannot score them — but a bad operator
-# env var must not crash the audit (set -e on the arithmetic) or be reported as
-# a hard failure. Flag it and render those checks as yellow "unscoreable" below;
-# the file-presence checks still score normally.
-thresholds_ok=1
-for _t in "$ONIONARMOR_CT_MIN_MAX" "$ONIONARMOR_CT_MAX_TCP_ESTABLISHED" "$ONIONARMOR_CT_UTIL_WARN_PCT"; do
-  ct_is_uint "$_t" && [ "$_t" -gt 0 ] || thresholds_ok=0
-done
+# A threshold OVERRIDE that is not a positive integer leaves THAT check with no
+# defined pass/fail boundary. Each numeric check validates ITS OWN threshold
+# independently below: a single bad override renders only its own check yellow
+# "unscoreable" and must never mask a real RED on a different, well-defined
+# check. A bad operator env var must not crash the audit (set -e on the
+# arithmetic) or be reported as a hard failure.
 
 dropin=$(ct_sysctl_dropin_path)
 modprobe=$(ct_modprobe_dropin_path)
 
 # --- (1) nf_conntrack_max >= target --------------------------------------
 maxv=$(ct_sysctl_runtime "$CT_KEY_MAX")
-if [ "$thresholds_ok" -eq 0 ]; then
-  oa_status_check yellow "nf_conntrack_max" "unscoreable — a target threshold is not a positive integer (ONIONARMOR_CT_MIN_MAX='$ONIONARMOR_CT_MIN_MAX')"
+if ! ct_is_uint "$ONIONARMOR_CT_MIN_MAX" || [ "$ONIONARMOR_CT_MIN_MAX" -le 0 ]; then
+  oa_status_check yellow "nf_conntrack_max" "unscoreable — target ONIONARMOR_CT_MIN_MAX='$ONIONARMOR_CT_MIN_MAX' is not a positive integer"
 elif ! ct_is_uint "$maxv" || [ "$maxv" -eq 0 ]; then
   # Tracker is loaded (marker present) but the ceiling is unreadable/zero — no
   # evidence to score against. Unscoreable, not a silent pass.
@@ -63,8 +60,8 @@ fi
 
 # --- (2) nf_conntrack_tcp_timeout_established <= target -------------------
 tcpv=$(ct_sysctl_runtime "$CT_KEY_TCP_ESTABLISHED")
-if [ "$thresholds_ok" -eq 0 ]; then
-  oa_status_check yellow "tcp_timeout_established" "unscoreable — a target threshold is not a positive integer (ONIONARMOR_CT_MAX_TCP_ESTABLISHED='$ONIONARMOR_CT_MAX_TCP_ESTABLISHED')"
+if ! ct_is_uint "$ONIONARMOR_CT_MAX_TCP_ESTABLISHED" || [ "$ONIONARMOR_CT_MAX_TCP_ESTABLISHED" -le 0 ]; then
+  oa_status_check yellow "tcp_timeout_established" "unscoreable — target ONIONARMOR_CT_MAX_TCP_ESTABLISHED='$ONIONARMOR_CT_MAX_TCP_ESTABLISHED' is not a positive integer"
 elif ! ct_is_uint "$tcpv"; then
   oa_status_check yellow "tcp_timeout_established" "unscoreable — cannot read a numeric $CT_KEY_TCP_ESTABLISHED (got '${tcpv:-<empty>}')"
 elif [ "$tcpv" -le "$ONIONARMOR_CT_MAX_TCP_ESTABLISHED" ]; then
@@ -78,8 +75,8 @@ fi
 # sized host can still trend hot, and we want that surfaced before it becomes an
 # outage. Integer math only (count*100 vs max*pct) — no floats.
 countv=$(ct_sysctl_runtime "$CT_KEY_COUNT")
-if [ "$thresholds_ok" -eq 0 ]; then
-  oa_status_check yellow "utilization" "unscoreable — the warn-band threshold is not a positive integer (ONIONARMOR_CT_UTIL_WARN_PCT='$ONIONARMOR_CT_UTIL_WARN_PCT')"
+if ! ct_is_uint "$ONIONARMOR_CT_UTIL_WARN_PCT" || [ "$ONIONARMOR_CT_UTIL_WARN_PCT" -le 0 ]; then
+  oa_status_check yellow "utilization" "unscoreable — warn-band ONIONARMOR_CT_UTIL_WARN_PCT='$ONIONARMOR_CT_UTIL_WARN_PCT' is not a positive integer"
 elif ! ct_is_uint "$maxv" || [ "$maxv" -eq 0 ]; then
   oa_status_check yellow "utilization" "unscoreable — cannot compute utilization: $CT_KEY_MAX is '${maxv:-<empty>}'"
 elif ! ct_is_uint "$countv"; then

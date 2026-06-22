@@ -147,10 +147,11 @@ if [ "$loaded" = "yes" ] && [ "$CT_VERIFY" -eq 1 ] && [ "${ONIONARMOR_SKIP_RELOA
     live=$(ct_sysctl_runtime "$key")
     if [ "$live" = "$want" ]; then
       info "verify: $key = $live"
-    elif [ -z "$live" ]; then
-      warn "verify: $key is unreadable (skipping)"
     else
-      warn "verify: $key is '$live', expected '$want'"; verify_failed=1
+      # An unreadable/empty live value is a verification FAILURE, not a skip:
+      # with --verify on, verification is authoritative, so we must not exit
+      # success on a key we could not confirm.
+      warn "verify: $key is '${live:-<empty>}', expected '$want'"; verify_failed=1
     fi
   done
 elif [ "$reload_failed" -eq 1 ]; then
